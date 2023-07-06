@@ -1,0 +1,16 @@
+[package]
+name = "gatling"
+version = "0.1.0"
+edition = "2021"
+homepage = "https://github.com/keep-starknet-strange/gomu-gomu-no-gatling"
+repository = "https://github.com/keep-starknet-strange/gomu-gomu-no-gatling"
+categories = ["command-line", "benchmark", "asynchronous"]
+keywords = ["starknet", "cairo"]
+description = "Gomu Gomu No Gatling is a blazing fast tool to benchmark Starknet sequencers."
+readme = "README.md"
+
+[dependencies]
+env_logger = "0.10.0"
+log = "0.4.17"
+tokio = { version = "1", features = ["full"] }
+thiserror = "1.0.40"

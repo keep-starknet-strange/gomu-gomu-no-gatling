@@ -1,0 +1,8 @@
+[workspace]
+members = ["crates/gatling"]
+
+[workspace.package]
+authors = ["Exploration Team @ StarkWare <@keep-starknet-strange>"]
+edition = "2021"
+repository = "https://github.com/keep-starknet-strange/gomu-gomu-no-gatling"
+

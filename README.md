@@ -1,2 +1,3 @@
-# gomu-gomu-no-gatling
-Blazing fast tool to benchmark Starknet sequencers 🦀
+# Gomu Gomu no Gatling
+
+Blazing fast tool to benchmark Starknet sequencers 🦀.
