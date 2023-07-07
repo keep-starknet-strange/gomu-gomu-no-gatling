@@ -1,0 +1,8 @@
+rpc:
+  url: "https://rinnegan.madara.zone"
+
+simulation:
+  fail_fast: true
+  setup:
+    create_accounts:
+      num_accounts: 10

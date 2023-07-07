@@ -31,6 +31,17 @@ impl Default for Rpc {
 #[allow(unused)]
 pub struct Simulation {
     pub fail_fast: bool,
+    pub setup: Option<Setup>,
+}
+
+#[derive(Debug, Deserialize, Default, Clone)]
+pub struct Setup {
+    pub create_accounts: Option<CreateAccounts>,
+}
+
+#[derive(Debug, Deserialize, Default, Clone)]
+pub struct CreateAccounts {
+    pub num_accounts: u32,
 }
 
 impl GatlingConfig {

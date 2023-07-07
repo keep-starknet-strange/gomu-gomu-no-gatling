@@ -42,6 +42,14 @@ impl GatlingShooter {
         info!("chain id: {}", chain_id);
         let block_number = self.starknet_rpc.block_number().await?;
         info!("block number: {}", block_number);
+
+        if let Some(setup) = self.config.clone().simulation.unwrap_or_default().setup {
+            if let Some(create_accounts) = setup.create_accounts {
+                self.create_accounts(_simulation_report, create_accounts.num_accounts)
+                    .await?;
+            }
+        }
+
         Ok(())
     }
 
@@ -55,6 +63,17 @@ impl GatlingShooter {
     async fn run<'a>(&mut self, _simulation_report: &'a mut SimulationReport) -> Result<()> {
         info!("firing!");
         let _fail_fast = self.config.simulation.clone().unwrap_or_default().fail_fast;
+        Ok(())
+    }
+
+    /// Create accounts.
+    async fn create_accounts<'a>(
+        &mut self,
+        _simulation_report: &'a mut SimulationReport,
+        num_accounts: u32,
+    ) -> Result<()> {
+        info!("creating {} accounts!", num_accounts);
+        // TODO: create accounts.
         Ok(())
     }
 }

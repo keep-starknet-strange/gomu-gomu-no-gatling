@@ -1,11 +1,11 @@
 [package]
 name = "gatling"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 license = "MIT"
 homepage = "https://github.com/keep-starknet-strange/gomu-gomu-no-gatling"
 repository = "https://github.com/keep-starknet-strange/gomu-gomu-no-gatling"
-categories = ["command-line", "benchmark", "asynchronous"]
+categories = ["command-line-interface", "command-line-utilities"]
 keywords = ["starknet", "cairo"]
 description = "Gomu Gomu No Gatling is a blazing fast tool to benchmark Starknet sequencers."
 readme = "README.md"

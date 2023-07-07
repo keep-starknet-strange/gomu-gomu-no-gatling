@@ -37,7 +37,7 @@ gatling --help
 ### Run a load test
 
 ```bash
-gatling shoot --config-path config/rinnegan.toml
+gatling shoot --config-path config/rinnegan.yaml
 ```
 
 ## License
