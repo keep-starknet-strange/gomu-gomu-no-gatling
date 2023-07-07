@@ -1,0 +1,5 @@
+[rpc]
+url = "https://rinnegan.madara.zone"
+
+[simulation]
+fail-fast = true
