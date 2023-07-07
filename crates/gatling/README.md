@@ -7,3 +7,39 @@
 [![Rust crate](https://img.shields.io/crates/v/galing.svg)](https://crates.io/crates/gatling)
 
 Blazing fast tool to benchmark Starknet sequencers 🦀.
+
+## Installation
+
+### From source
+
+```bash
+git clone https://github.com/keep-starknet-strange/gomu-gomu-no-gatling
+cd gomu-gomu-no-gatling
+cargo install --path .
+```
+
+### From crates.io
+
+```bash
+cargo install --locked gatling
+```
+
+## Usage
+
+```bash
+gatling --help
+```
+
+### Configuration
+
+> **TODO**: Add configuration options.
+
+### Run a load test
+
+```bash
+gatling shoot --config-path config/rinnegan.toml
+```
+
+## License
+
+Licensed under [MIT](LICENSE).

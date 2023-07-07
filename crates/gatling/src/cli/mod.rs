@@ -1,20 +1,37 @@
 //! Defines the CLI commands.
 
 // Imports
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
+
+const VERSION_STRING: &str = concat!(env!("CARGO_PKG_VERSION"));
 
 /// Main CLI struct
 #[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
+#[command(
+    author,
+    version = VERSION_STRING,
+    about,
+    long_about = "Gomu Gomu no Gatling is a load testing tool for Starknet RPC endpoints."
+)]
 pub struct Cli {
+    #[clap(flatten)]
+    pub global_opts: GlobalOpts,
+
     /// The subcommand to run.
     #[command(subcommand)]
-    pub command: Option<Commands>,
+    pub command: Command,
 }
 
 /// Subcommands
 #[derive(Subcommand, Debug)]
-pub enum Commands {
+pub enum Command {
     /// Trigger a load test.
     Shoot {},
+}
+
+#[derive(Debug, Args)]
+pub struct GlobalOpts {
+    /// Configuration file path, optional.
+    #[clap(short, long, global = true)]
+    pub config_path: Option<String>,
 }

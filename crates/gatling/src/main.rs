@@ -5,7 +5,7 @@ use color_eyre::eyre::Result;
 use dotenv::dotenv;
 use gatling::{
     actions::shoot::shoot,
-    cli::{Cli, Commands},
+    cli::{Cli, Command},
     config::GatlingConfig,
 };
 
@@ -20,23 +20,23 @@ async fn main() -> Result<()> {
     // Load the environment variables from the .env file.
     dotenv().ok();
 
-    // Retrieve the application configuration.
-    let cfg = GatlingConfig::new()?;
-
     info!("Starting Gomu Gomu no Gatling...");
 
     // Parse the command line arguments.
     let cli = Cli::parse();
 
+    // Retrieve the application configuration.
+    let cfg = match cli.global_opts.config_path {
+        Some(path) => GatlingConfig::from_file(&path)?,
+        None => GatlingConfig::new()?,
+    };
+
     // Execute the command.
     match cli.command {
-        Some(command) => match command {
-            Commands::Shoot {} => shoot(&cfg).await?,
-        },
-        None => {
-            info!("nothing to do there, bye 👋");
+        Command::Shoot { .. } => {
+            let simulation_report = shoot(cfg).await?;
+            info!("simulation completed: {:?}", simulation_report);
         }
     }
-
     Ok(())
 }
