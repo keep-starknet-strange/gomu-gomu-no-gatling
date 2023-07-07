@@ -2,4 +2,4 @@
 url = "https://rinnegan.madara.zone"
 
 [simulation]
-fail-fast = true
+fail_fast = true

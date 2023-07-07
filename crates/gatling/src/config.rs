@@ -5,24 +5,32 @@ use config::{builder::DefaultState, Config, ConfigBuilder, File};
 use serde_derive::Deserialize;
 
 /// Configuration for the application.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default, Clone)]
 pub struct GatlingConfig {
     /// The RPC configuration.
-    pub rpc: Rpc,
+    pub rpc: Option<Rpc>,
     /// The simulation configuration.
-    pub simulation: Simulation,
+    pub simulation: Option<Simulation>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[allow(unused)]
 pub struct Rpc {
     pub url: String,
 }
 
-#[derive(Debug, Deserialize)]
+impl Default for Rpc {
+    fn default() -> Self {
+        Self {
+            url: "http://localhost:9944".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Default, Clone)]
 #[allow(unused)]
 pub struct Simulation {
-    pub fail_fast: Option<bool>,
+    pub fail_fast: bool,
 }
 
 impl GatlingConfig {
@@ -48,8 +56,6 @@ impl GatlingConfig {
 
 fn base_config_builder() -> ConfigBuilder<DefaultState> {
     Config::builder()
-        // Start off by merging in the "default" configuration file
-        .add_source(File::with_name("config/default"))
         // Add in settings from the environment (with a prefix of GATLING)
         // Eg.. `GATLING_FAIL_FAST=1 ./target/app` would set the `fail_fast` key
         .add_source(config::Environment::with_prefix("gatling"))

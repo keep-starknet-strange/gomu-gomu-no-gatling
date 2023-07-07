@@ -2,4 +2,4 @@
 url = "http://localhost:9944"
 
 [simulation]
-fail-fast = true
+fail_fast = true

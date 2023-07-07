@@ -27,7 +27,8 @@ pub struct GatlingShooter {
 
 impl GatlingShooter {
     pub fn new(config: GatlingConfig) -> Result<Self> {
-        let starknet_rpc = starknet_rpc_provider(Url::parse(&config.rpc.url)?);
+        let starknet_rpc =
+            starknet_rpc_provider(Url::parse(&config.clone().rpc.unwrap_or_default().url)?);
         Ok(Self {
             config,
             starknet_rpc,
@@ -53,7 +54,7 @@ impl GatlingShooter {
     /// Run the simulation.
     async fn run<'a>(&mut self, _simulation_report: &'a mut SimulationReport) -> Result<()> {
         info!("firing!");
-        let _fail_fast = self.config.simulation.fail_fast.unwrap_or(true);
+        let _fail_fast = self.config.simulation.clone().unwrap_or_default().fail_fast;
         Ok(())
     }
 }
