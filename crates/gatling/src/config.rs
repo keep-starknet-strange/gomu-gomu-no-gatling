@@ -8,9 +8,9 @@ use serde_derive::Deserialize;
 #[derive(Debug, Deserialize)]
 pub struct GatlingConfig {
     /// The RPC configuration.
-    rpc: Rpc,
+    _rpc: Rpc,
     /// The simulation configuration.
-    simulation: Simulation,
+    _simulation: Simulation,
 }
 
 #[derive(Debug, Deserialize)]
@@ -36,7 +36,6 @@ impl GatlingConfig {
             .add_source(config::Environment::with_prefix("gatling"))
             .build()
             .unwrap()
-            .clone()
             .try_deserialize()
             .map_err(|e| e.into())
     }
