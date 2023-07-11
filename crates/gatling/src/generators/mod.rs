@@ -1,16 +1,20 @@
 use rand::Rng;
 use starknet::{
-    accounts::{Account, Call, SingleOwnerAccount},
-    core::{
-        chain_id,
-        types::{BlockId, BlockTag, FieldElement},
-        utils::get_selector_from_name,
-    },
-    providers::SequencerGatewayProvider,
+    core::types::FieldElement,
     signers::{LocalWallet, SigningKey},
 };
+// use starknet::{
+//     accounts::{Account, Call, SingleOwnerAccount},
+//     core::{
+//         chain_id,
+//         types::{BlockId, BlockTag, FieldElement},
+//         utils::get_selector_from_name,
+//     },
+//     providers::SequencerGatewayProvider,
+//     signers::{LocalWallet, SigningKey},
+// };
 
-const TESTNET_TOKEN_ADDRESS: &str = "07394cbe418daa16e42b87ba67372d4ab4a5df0b05c6e554d158458ce245bc10";
+const _TESTNET_TOKEN_ADDRESS: &str = "07394cbe418daa16e42b87ba67372d4ab4a5df0b05c6e554d158458ce245bc10";
 
 /// generate random number for testing
 pub fn get_rng() -> FieldElement {
