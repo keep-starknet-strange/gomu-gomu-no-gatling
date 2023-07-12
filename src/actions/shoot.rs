@@ -130,26 +130,16 @@ impl GatlingShooter {
 
             let contract_factory = ContractFactory::new(*OZ_CLASS_HASH, account);
             contract_factory
-                .deploy(&vec![felt!("12323")], felt!("45678"), false)
+                .deploy(&vec![felt!("123")], felt!("456"), false)
                 .send()
                 .await
                 .expect("Unable to deploy contract");
 
-            // let deployment = factory.deploy(felt!("123"));
-
-            // let est_fee = deployment.estimate_fee().await.unwrap();
-
-            // // In an actual application you might want to add a buffer to the amount
-            // println!(
-            //     "Fund at least {} wei to {:#064x}",
-            //     est_fee.overall_fee,
-            //     deployment.address()
-            // );
+            // TODO: fund accounts and add timing
 
             print!(".{i}");
         }
 
-        // TODO: create accounts.
         Ok(())
     }
 
