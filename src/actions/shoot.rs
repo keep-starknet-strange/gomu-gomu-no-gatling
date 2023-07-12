@@ -3,9 +3,9 @@ use color_eyre::eyre::Result;
 use lazy_static::lazy_static;
 use log::info;
 
-use starknet::accounts::{SingleOwnerAccount, Account, AccountError};
-use starknet::core::chain_id;
+use starknet::accounts::{Account, AccountError, SingleOwnerAccount};
 use starknet::contract::ContractFactory;
+use starknet::core::chain_id;
 use starknet::core::types::{
     contract::legacy::LegacyContractClass, BlockId, BlockTag, FieldElement, StarknetError,
 };
@@ -51,7 +51,7 @@ impl GatlingShooter {
         let deployer = config.clone().deployer.unwrap_or_default();
 
         let signer = LocalWallet::from(SigningKey::from_secret_scalar(
-            FieldElement::from_hex_be(deployer.clone().signing_key.as_str()).unwrap_or_default(),
+            FieldElement::from_hex_be(deployer.signing_key.as_str()).unwrap_or_default(),
         ));
 
         // implement let account = Arc::new(account); instead of signer
@@ -117,12 +117,12 @@ impl GatlingShooter {
         account_details: CreateAccounts,
     ) -> Result<()> {
         println!("\tcreating {} accounts", account_details.num_accounts);
-        
+
         for i in 0..account_details.num_accounts {
             let mut account = SingleOwnerAccount::new(
                 &self.starknet_rpc,
                 self.signer.clone(),
-                self.address.clone(),
+                self.address,
                 chain_id::TESTNET,
             );
 
@@ -155,12 +155,14 @@ impl GatlingShooter {
 
     async fn declare_oz_contract<'a>(&self) {
         let contract_artifact: LegacyContractClass = serde_json::from_reader(
-            std::fs::File::open("contracts/OpenzeppelinAccount_v0.json").unwrap()).unwrap();
+            std::fs::File::open("contracts/OpenzeppelinAccount_v0.json").unwrap(),
+        )
+        .unwrap();
 
         let mut account = SingleOwnerAccount::new(
             &self.starknet_rpc,
             self.signer.clone(),
-            self.address.clone(),
+            self.address,
             chain_id::TESTNET,
         );
 
@@ -172,14 +174,19 @@ impl GatlingShooter {
             .await
         {
             Ok(tx_resp) => {
-                info!("Declared OZ Account Contract: {:?}", tx_resp.transaction_hash);
-            },
-            Err(AccountError::Provider(ProviderError::StarknetError(StarknetError::ClassAlreadyDeclared))) => {
+                info!(
+                    "Declared OZ Account Contract: {:?}",
+                    tx_resp.transaction_hash
+                );
+            }
+            Err(AccountError::Provider(ProviderError::StarknetError(
+                StarknetError::ClassAlreadyDeclared,
+            ))) => {
                 info!("OZ account already declared");
-            },
+            }
             Err(e) => {
                 panic!("could not declare OZ account contract: {e}");
-            },
+            }
         };
     }
 }
