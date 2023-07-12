@@ -39,7 +39,3 @@ gatling --help
 ```bash
 gatling shoot --config-path config/rinnegan.yaml
 ```
-
-## License
-
-Licensed under [MIT](LICENSE).
