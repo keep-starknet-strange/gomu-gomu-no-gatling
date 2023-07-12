@@ -6,3 +6,4 @@ simulation:
   setup:
     create_accounts:
       num_accounts: 10
+      seed: 0

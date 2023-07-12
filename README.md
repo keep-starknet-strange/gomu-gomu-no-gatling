@@ -24,6 +24,12 @@ cargo install --path .
 cargo install --locked gatling
 ```
 
+### Run debug
+
+```bash
+RUST_LOG=info cargo run -- shoot -c config/rinnegan.yaml
+```
+
 ## Usage
 
 ```bash

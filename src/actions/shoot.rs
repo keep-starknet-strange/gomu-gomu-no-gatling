@@ -1,9 +1,10 @@
-use crate::config::GatlingConfig;
+use crate::config::{CreateAccounts, GatlingConfig};
 use color_eyre::eyre::Result;
 use log::info;
 use starknet::{core::types::FieldElement, providers::Provider};
 
 use starknet::providers::{jsonrpc::HttpTransport, JsonRpcClient};
+use std::str;
 use url::Url;
 
 /// Shoot the load test simulation.
@@ -37,15 +38,17 @@ impl GatlingShooter {
 
     /// Setup the simulation.
     async fn setup<'a>(&mut self, _simulation_report: &'a mut SimulationReport) -> Result<()> {
-        info!("setting up!");
-        let chain_id = self.starknet_rpc.chain_id().await?;
-        info!("chain id: {}", chain_id);
+        let chain_id = self.starknet_rpc.chain_id().await?.to_bytes_be();
         let block_number = self.starknet_rpc.block_number().await?;
-        info!("block number: {}", block_number);
+        println!(
+            "chain id - {:?} @ block number - {}",
+            str::from_utf8(&chain_id)?.trim_start_matches('\0'),
+            block_number
+        );
 
         if let Some(setup) = self.config.clone().simulation.unwrap_or_default().setup {
             if let Some(create_accounts) = setup.create_accounts {
-                self.create_accounts(_simulation_report, create_accounts.num_accounts)
+                self.create_accounts(_simulation_report, create_accounts)
                     .await?;
             }
         }
@@ -70,9 +73,10 @@ impl GatlingShooter {
     async fn create_accounts<'a>(
         &mut self,
         _simulation_report: &'a mut SimulationReport,
-        num_accounts: u32,
+        account_details: CreateAccounts,
     ) -> Result<()> {
-        info!("creating {} accounts!", num_accounts);
+        println!("creating {} accounts w/ seed {}", account_details.num_accounts, account_details.seed);
+
         // TODO: create accounts.
         Ok(())
     }

@@ -42,6 +42,7 @@ pub struct Setup {
 #[derive(Debug, Deserialize, Default, Clone)]
 pub struct CreateAccounts {
     pub num_accounts: u32,
+    pub seed: u32,
 }
 
 impl GatlingConfig {

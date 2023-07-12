@@ -20,7 +20,7 @@ async fn main() -> Result<()> {
     // Load the environment variables from the .env file.
     dotenv().ok();
 
-    info!("Starting Gomu Gomu no Gatling...");
+    info!("Starting Gatling...");
 
     // Parse the command line arguments.
     let cli = Cli::parse();
