@@ -11,6 +11,8 @@ pub struct GatlingConfig {
     pub rpc: Option<Rpc>,
     /// The simulation configuration.
     pub simulation: Option<Simulation>,
+    /// The fee paying account
+    pub deployer: Option<Deployer>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -42,7 +44,14 @@ pub struct Setup {
 #[derive(Debug, Deserialize, Default, Clone)]
 pub struct CreateAccounts {
     pub num_accounts: u32,
-    pub seed: u32,
+}
+
+#[derive(Debug, Deserialize, Default, Clone)]
+#[allow(unused)]
+pub struct Deployer {
+    pub address: String,
+    pub signing_key: String,
+    pub salt: u32,
 }
 
 impl GatlingConfig {

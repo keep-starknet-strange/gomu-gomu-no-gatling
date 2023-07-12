@@ -20,6 +20,7 @@ async fn main() -> Result<()> {
     // Load the environment variables from the .env file.
     dotenv().ok();
 
+    // TODO: print OS stats CPU info, platform, arch, mem info
     info!("Starting Gatling...");
 
     // Parse the command line arguments.

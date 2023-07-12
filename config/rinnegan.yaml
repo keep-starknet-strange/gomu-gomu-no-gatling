@@ -6,4 +6,8 @@ simulation:
   setup:
     create_accounts:
       num_accounts: 10
-      seed: 0
+
+deployer:
+  address: "0x0000000000000000000000000000000000000000000000000000000000000001"
+  signing_key: "0x0"
+  salt: 1
