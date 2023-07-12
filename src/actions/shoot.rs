@@ -75,16 +75,6 @@ impl GatlingShooter {
             block_number
         );
 
-        // let call_res = self.starknet_rpc.call(FunctionCall {
-        //     contract_address: *FEE_TOKEN_ADDRESS,
-        //     entry_point_selector: selector!("balanceOf"),
-        //     calldata: vec![FieldElement::from_hex_be("0x01").unwrap()],
-        // },
-        // BlockId::Tag(BlockTag::Latest),
-        // ).await.expect("failed to call contract");
-
-        // println!("BALANCE: {:?}", call_res);
-
         if let Some(setup) = self.config.clone().simulation.unwrap_or_default().setup {
             if let Some(create_accounts) = setup.create_accounts {
                 self.declare_oz_contract().await;
