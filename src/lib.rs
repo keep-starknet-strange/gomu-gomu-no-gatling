@@ -9,7 +9,5 @@ pub mod config;
 /// Actions.
 pub mod actions;
 
-
 /// Generators.
 pub mod generators;
-

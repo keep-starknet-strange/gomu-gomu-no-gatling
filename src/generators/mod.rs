@@ -14,14 +14,14 @@ use starknet::{
 //     signers::{LocalWallet, SigningKey},
 // };
 
-const _TESTNET_TOKEN_ADDRESS: &str = "07394cbe418daa16e42b87ba67372d4ab4a5df0b05c6e554d158458ce245bc10";
+const _TESTNET_TOKEN_ADDRESS: &str =
+    "07394cbe418daa16e42b87ba67372d4ab4a5df0b05c6e554d158458ce245bc10";
 
 /// generate random number for testing
 pub fn get_rng() -> FieldElement {
     let mut rng = rand::thread_rng();
     FieldElement::from(rng.gen::<u64>())
 }
-
 
 pub fn generate_stark_keys() -> LocalWallet {
     let private = get_rng();
