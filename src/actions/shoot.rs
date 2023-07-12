@@ -4,7 +4,6 @@ use lazy_static::lazy_static;
 use log::info;
 
 use starknet::accounts::{Account, AccountError, SingleOwnerAccount};
-use starknet::contract::ContractFactory;
 use starknet::core::chain_id;
 use starknet::core::types::{
     contract::legacy::LegacyContractClass, BlockId, BlockTag, FieldElement, StarknetError,
@@ -75,9 +74,16 @@ impl GatlingShooter {
             block_number
         );
 
+        self.declare_contract_legacy("contracts/v0/ERC20.json")
+            .await;
+
+        self.declare_contract_legacy("contracts/v0/ERC721.json")
+            .await;
+
         if let Some(setup) = self.config.clone().simulation.unwrap_or_default().setup {
             if let Some(create_accounts) = setup.create_accounts {
-                self.declare_oz_contract().await;
+                self.declare_contract_legacy("contracts/v0/OpenzeppelinAccount.json")
+                    .await;
 
                 self.create_accounts(_simulation_report, create_accounts)
                     .await?;
@@ -109,21 +115,21 @@ impl GatlingShooter {
         println!("\tcreating {} accounts", account_details.num_accounts);
 
         for i in 0..account_details.num_accounts {
-            let mut account = SingleOwnerAccount::new(
-                &self.starknet_rpc,
-                self.signer.clone(),
-                self.address,
-                chain_id::TESTNET,
-            );
+            // let mut account = SingleOwnerAccount::new(
+            //     &self.starknet_rpc,
+            //     self.signer.clone(),
+            //     self.address,
+            //     chain_id::TESTNET,
+            // );
 
-            account.set_block_id(BlockId::Tag(BlockTag::Pending));
+            // account.set_block_id(BlockId::Tag(BlockTag::Pending));
 
-            let contract_factory = ContractFactory::new(*OZ_CLASS_HASH, account);
-            contract_factory
-                .deploy(&vec![felt!("123")], felt!("456"), false)
-                .send()
-                .await
-                .expect("Unable to deploy contract");
+            // let contract_factory = ContractFactory::new(*OZ_CLASS_HASH, account);
+            // contract_factory
+            //     .deploy(&vec![felt!("123")], felt!("456"), false)
+            //     .send()
+            //     .await
+            //     .expect("Unable to deploy contract");
 
             // TODO: fund accounts and add timing
 
@@ -133,11 +139,9 @@ impl GatlingShooter {
         Ok(())
     }
 
-    async fn declare_oz_contract<'a>(&self) {
-        let contract_artifact: LegacyContractClass = serde_json::from_reader(
-            std::fs::File::open("contracts/OpenzeppelinAccount_v0.json").unwrap(),
-        )
-        .unwrap();
+    async fn declare_contract_legacy<'a>(&self, contract_path: &str) {
+        let contract_artifact: LegacyContractClass =
+            serde_json::from_reader(std::fs::File::open(contract_path).unwrap()).unwrap();
 
         let mut account = SingleOwnerAccount::new(
             &self.starknet_rpc,
@@ -154,18 +158,15 @@ impl GatlingShooter {
             .await
         {
             Ok(tx_resp) => {
-                info!(
-                    "Declared OZ Account Contract: {:?}",
-                    tx_resp.transaction_hash
-                );
+                info!("Declared Contract TX: {:?}", tx_resp.transaction_hash);
             }
             Err(AccountError::Provider(ProviderError::StarknetError(
                 StarknetError::ClassAlreadyDeclared,
             ))) => {
-                info!("OZ account already declared");
+                info!("Contract already declared");
             }
             Err(e) => {
-                panic!("could not declare OZ account contract: {e}");
+                panic!("could not declare contract: {e}");
             }
         };
     }

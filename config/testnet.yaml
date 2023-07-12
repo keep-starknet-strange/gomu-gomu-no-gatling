@@ -1,5 +1,5 @@
 rpc:
-  url: "http://localhost:9944"
+  url: "http4://localhost:994"
 
 simulation:
   fail_fast: true
