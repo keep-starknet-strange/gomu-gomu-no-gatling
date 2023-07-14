@@ -43,5 +43,5 @@ gatling --help
 ### Run a load test
 
 ```bash
-gatling shoot --config-path config/rinnegan.yaml
+gatling shoot -c config/rinnegan.yaml
 ```
