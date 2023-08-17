@@ -1,9 +1,10 @@
-# Gomu Gomu no Gatling
-
-<p align="center">
+<!-- markdownlint-disable -->
+<div align="center">
+  <h1> Gomu Gomu no Gatling </h1>
   <img src="./docs/images/gomu-gomu.png" width="256">
-</p>
-
+</div>
+<br />
+<!-- markdownlint-restore -->
 
 [![GitHub Workflow Status](https://github.com/keep-starknet-strange/gomu-gomu-no-gatling/actions/workflows/test.yml/badge.svg)](https://github.com/keep-starknet-strange/gomu-gomu-no-gatling/actions/workflows/test.yml)
 [![Project license](https://img.shields.io/github/license/keep-starknet-strange/gomu-gomu-no-gatling.svg?style=flat-square)](LICENSE)
