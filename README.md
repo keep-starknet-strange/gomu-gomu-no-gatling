@@ -1,7 +1,7 @@
 # Gomu Gomu no Gatling
 
 <p align="center">
-  <img src="./docs/images/gomu-gomu.png" width="512">
+  <img src="./docs/images/gomu-gomu.png" width="256">
 </p>
 
 
