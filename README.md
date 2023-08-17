@@ -1,7 +1,7 @@
 <!-- markdownlint-disable -->
 <div align="center">
   <h1> Gomu Gomu no Gatling </h1>
-  <img src="./docs/images/gomu-gomu.png" width="256">
+  <img src="./docs/images/gomu-gomu-no-bg.png" width="256">
 </div>
 <br />
 <!-- markdownlint-restore -->
