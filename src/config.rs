@@ -15,6 +15,18 @@ pub struct GatlingConfig {
     pub deployer: Option<Deployer>,
 }
 
+pub enum Wait {
+    Seconds(u32),
+    Boolean(bool),
+}
+
+pub struct Benchmark {
+    pub name: String,
+    pub num: u32,
+    pub metrics: Vec<String>,
+    pub wait: Wait,
+}
+
 #[derive(Debug, Deserialize, Clone)]
 #[allow(unused)]
 pub struct Rpc {

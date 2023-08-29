@@ -1,3 +1,5 @@
+mod metrics;
+
 #[macro_use]
 extern crate log;
 use clap::Parser;
