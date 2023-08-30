@@ -9,6 +9,8 @@ use std::collections::HashMap;
 
 use crate::metrics::compute_all_metrics;
 
+use rand::seq::SliceRandom;
+
 use starknet::accounts::{
     Account, AccountError, AccountFactory, Call, ConnectedAccount, OpenZeppelinAccountFactory,
     SingleOwnerAccount,
@@ -60,9 +62,6 @@ pub struct GatlingShooter {
 
 #[derive(Clone)]
 pub struct GatlingEnvironment {
-    erc20_class_hash: FieldElement,
-    erc721_class_hash: FieldElement,
-    account_class_hash: FieldElement,
     erc20_address: FieldElement,
     erc721_address: FieldElement,
     accounts: Vec<FieldElement>,
@@ -106,6 +105,22 @@ impl GatlingShooter {
         ))
     }
 
+    /// Return a random account address from the ones deployed during the setup phase
+    /// Or the deployer account address if no accounts were deployed or
+    /// if the environment is not yet populated
+    pub fn get_random_account_address(&self) -> FieldElement {
+        match self.environment() {
+            Ok(environment) => {
+                let mut rng = rand::thread_rng();
+                *environment
+                    .accounts
+                    .choose(&mut rng)
+                    .unwrap_or(&self.account.address())
+            }
+            Err(_) => self.account.address(),
+        }
+    }
+
     /// Setup the simulation.
     async fn setup<'a>(&mut self, simulation_report: &'a mut SimulationReport) -> Result<()> {
         let chain_id = self.starknet_rpc.chain_id().await?.to_bytes_be();
@@ -141,14 +156,10 @@ impl GatlingShooter {
             Vec::new()
         };
 
-        // TODO: implement deploy_erc20
-        let erc20_address = self.deploy_erc20(erc721_class_hash).await?;
+        let erc20_address = self.deploy_erc20(erc20_class_hash).await?;
         let erc721_address = self.deploy_erc721(erc721_class_hash).await?;
 
         let environment = GatlingEnvironment {
-            erc20_class_hash,
-            erc721_class_hash,
-            account_class_hash,
             erc20_address,
             erc721_address,
             accounts,
@@ -293,8 +304,7 @@ impl GatlingShooter {
         let mut transactions = Vec::new();
 
         for _ in 0..num_erc721_mints {
-            let token_id = get_rng();
-            let transaction_hash = self.mint(token_id, environment.erc721_address).await?;
+            let transaction_hash = self.mint(environment.erc721_address).await?;
             transactions.push(transaction_hash);
         }
 
@@ -318,7 +328,11 @@ impl GatlingShooter {
         let call = Call {
             to: contract_address,
             selector: selector!("transfer"),
-            calldata: vec![felt!("0x2"), felt!("0x1000000"), felt!("0x0")],
+            calldata: vec![
+                self.get_random_account_address(),
+                felt!("0x1000000"),
+                felt!("0x0"),
+            ],
         };
 
         let result = self
@@ -334,20 +348,22 @@ impl GatlingShooter {
         Ok(result.transaction_hash)
     }
 
-    async fn mint(
-        &mut self,
-        token_id: FieldElement,
-        contract_address: FieldElement,
-    ) -> Result<FieldElement> {
+    async fn mint(&mut self, contract_address: FieldElement) -> Result<FieldElement> {
         debug!(
-            "Minting token_id={} for address={:#064x} with nonce={}",
-            token_id, contract_address, self.nonce
+            "Minting for address={:#064x} with nonce={}",
+            contract_address, self.nonce
         );
+
+        let (token_id_low, token_id_high) = (get_rng(), get_rng());
 
         let call = Call {
             to: contract_address,
             selector: selector!("mint"),
-            calldata: vec![felt!("0x2"), token_id, felt!("0x0")],
+            calldata: vec![
+                self.get_random_account_address(),
+                token_id_low,
+                token_id_high,
+            ],
         };
 
         let result = self
@@ -373,14 +389,9 @@ impl GatlingShooter {
 
         let deploy = contract_factory.deploy(constructor_args, salt, unique);
 
-        let max_fee = MAX_FEE + felt!("1");
+        info!("Deploying erc721 with nonce={}", self.nonce);
 
-        info!(
-            "Deploying erc721 with nonce={:#064x} and max_fee={max_fee:#064x}",
-            self.nonce
-        );
-
-        let result = deploy.nonce(self.nonce).max_fee(max_fee).send().await?;
+        let result = deploy.nonce(self.nonce).max_fee(MAX_FEE).send().await?;
         self.nonce = self.nonce + felt!("1");
         info!("{result:#?}");
 
@@ -401,19 +412,27 @@ impl GatlingShooter {
 
         let salt = get_rng();
 
-        let constructor_args = &[felt!("0xa1"), felt!("0xa2"), self.account.address()];
+        let name = get_rng();
+        let symbol = get_rng();
+        let decimals = felt!("128");
+        let (initial_supply_low, initial_supply_high) = (get_rng(), get_rng());
+        let recipient = self.account.address();
+
+        let constructor_args = &[
+            name,
+            symbol,
+            decimals,
+            initial_supply_low,
+            initial_supply_high,
+            recipient,
+        ];
         let unique = false;
 
         let deploy = contract_factory.deploy(constructor_args, salt, unique);
 
-        let max_fee = MAX_FEE + felt!("1");
+        info!("Deploying erc20 with nonce={}", self.nonce);
 
-        info!(
-            "Deploying erc20 with nonce={:#064x} and max_fee={max_fee:#064x}",
-            self.nonce
-        );
-
-        let result = deploy.nonce(self.nonce).max_fee(max_fee).send().await?;
+        let result = deploy.nonce(self.nonce).max_fee(MAX_FEE).send().await?;
         self.nonce = self.nonce + felt!("1");
         info!("{result:#?}");
 
@@ -428,8 +447,6 @@ impl GatlingShooter {
         info!("Calculated address={:#064x}", address);
         Ok(address)
     }
-
-
 
     /// Create accounts.
     async fn create_accounts<'a>(
@@ -470,7 +487,7 @@ impl GatlingShooter {
             debug!("Waiting for deploy account tx");
             wait_for_tx(&self.starknet_rpc, result.transaction_hash).await?;
 
-            self.transfer(deploy.address()).await?;
+            // self.transfer(deploy.address()).await?;
         }
 
         Ok(accounts)
