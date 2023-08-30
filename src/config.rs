@@ -8,11 +8,11 @@ use serde_derive::Deserialize;
 #[derive(Debug, Deserialize, Default, Clone)]
 pub struct GatlingConfig {
     /// The RPC configuration.
-    pub rpc: Option<Rpc>,
+    pub rpc: Rpc,
     /// The simulation configuration.
-    pub simulation: Option<Simulation>,
+    pub simulation: Simulation,
     /// The fee paying account
-    pub deployer: Option<Deployer>,
+    pub deployer: Deployer,
 }
 
 pub enum Wait {
@@ -45,16 +45,14 @@ impl Default for Rpc {
 #[allow(unused)]
 pub struct Simulation {
     pub fail_fast: bool,
-    pub setup: Option<Setup>,
+    pub setup: Setup,
 }
 
 #[derive(Debug, Deserialize, Default, Clone)]
 pub struct Setup {
-    pub create_accounts: Option<CreateAccounts>,
-}
-
-#[derive(Debug, Deserialize, Default, Clone)]
-pub struct CreateAccounts {
+    pub erc20_contract_path: String,
+    pub erc721_contract_path: String,
+    pub account_contract_path: String,
     pub num_accounts: u32,
 }
 
@@ -63,7 +61,6 @@ pub struct CreateAccounts {
 pub struct Deployer {
     pub address: String,
     pub signing_key: String,
-    pub salt: u32,
 }
 
 impl GatlingConfig {

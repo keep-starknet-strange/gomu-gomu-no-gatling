@@ -1,4 +1,4 @@
-use crate::config::{CreateAccounts, GatlingConfig};
+use crate::config::GatlingConfig;
 use crate::generators::get_rng;
 use crate::utils::{calculate_contract_address, get_sysinfo, pretty_print_hashmap, wait_for_tx};
 use color_eyre::Result;
@@ -69,19 +69,24 @@ pub struct GatlingShooter {
     erc721_address: Option<FieldElement>,
 }
 
+pub struct GatlingEnvironment {
+    erc20_class_hash: FieldElement,
+    erc721_class_hash: FieldElement,
+    erc20_address: FieldElement,
+    erc721_address: FieldElement,
+}
+
 impl GatlingShooter {
     pub async fn new(config: GatlingConfig) -> Result<Self> {
-        let starknet_rpc = Arc::new(starknet_rpc_provider(Url::parse(
-            &config.clone().rpc.unwrap_or_default().url,
-        )?));
-        let deployer = config.clone().deployer.unwrap_or_default();
+        let starknet_rpc = Arc::new(starknet_rpc_provider(Url::parse(&config.clone().rpc.url)?));
 
         let signer = LocalWallet::from(SigningKey::from_secret_scalar(
-            FieldElement::from_hex_be(deployer.signing_key.as_str()).unwrap_or_default(),
+            FieldElement::from_hex_be(config.deployer.signing_key.as_str()).unwrap_or_default(),
         ));
 
         // implement let account = Arc::new(account); instead of signer
-        let address = FieldElement::from_hex_be(deployer.address.as_str()).unwrap_or_default();
+        let address =
+            FieldElement::from_hex_be(config.deployer.address.as_str()).unwrap_or_default();
 
         let account = SingleOwnerAccount::new(
             starknet_rpc.clone(),
@@ -112,20 +117,20 @@ impl GatlingShooter {
             block_number
         );
 
-        self.declare_contract_legacy("contracts/v0/ERC20.json")
+        let setup_config = self.config.clone().simulation.setup;
+
+        self.declare_contract_legacy(&setup_config.erc20_contract_path)
             .await;
 
-        self.declare_contract_legacy("contracts/v0/ERC721.json")
+        self.declare_contract_legacy(&setup_config.erc721_contract_path)
             .await;
 
-        if let Some(setup) = self.config.clone().simulation.unwrap_or_default().setup {
-            if let Some(create_accounts) = setup.create_accounts {
-                self.declare_contract_legacy("contracts/v0/OpenzeppelinAccount.json")
-                    .await;
+        if setup_config.num_accounts > 0 {
+            self.declare_contract_legacy(&setup_config.account_contract_path)
+                .await;
 
-                self.create_accounts(simulation_report, create_accounts)
-                    .await?;
-            }
+            self.create_accounts(simulation_report, setup_config.num_accounts)
+                .await?;
         }
 
         let erc721_address = self.deploy_erc721().await?;
@@ -145,7 +150,7 @@ impl GatlingShooter {
         pretty_print_hashmap(&simulation_report.reports["erc20"]);
 
         info!("=> Metrics for ERC721 mint <=");
-        pretty_print_hashmap(&simulation_report.reports["erc20"]);
+        pretty_print_hashmap(&simulation_report.reports["erc721"]);
 
         Ok(())
     }
@@ -193,7 +198,7 @@ impl GatlingShooter {
         let transactions = self.run_erc20(simulation_report).await?;
         self.check_transactions(transactions).await;
         // TODO: make it configurable
-        let num_blocks = 5;
+        let num_blocks = 4;
 
         let num_tx_per_block = self.get_num_tx_per_block(num_blocks).await?;
         let erc20_metrics = compute_all_metrics(num_tx_per_block);
@@ -206,7 +211,6 @@ impl GatlingShooter {
                 .collect(),
         );
 
-        // let nonce = self.account.get_nonce().await?;// + felt!("1");
         let transactions = self.run_erc721(simulation_report).await?;
         self.check_transactions(transactions).await;
 
@@ -227,11 +231,12 @@ impl GatlingShooter {
         &mut self,
         _simulation_report: &'a mut SimulationReport,
     ) -> Result<Vec<FieldElement>> {
-        let num_erc20_transfers = 5;
+        let num_erc20_transfers = 1000;
 
         info!("Sending {num_erc20_transfers} ERC20 transfers ...");
-        let _fail_fast = self.config.simulation.clone().unwrap_or_default().fail_fast;
+        let _fail_fast = self.config.simulation.fail_fast;
 
+        // TODO: use deployed address instead of hardcoded
         let address = felt!("0x0389a894d597c962b3873b703d9682e49b95ab1f0e5242a7dd512ecf7186294e");
 
         let start = SystemTime::now();
@@ -262,10 +267,10 @@ impl GatlingShooter {
         &mut self,
         _simulation_report: &'a mut SimulationReport,
     ) -> Result<Vec<FieldElement>> {
-        let num_erc721_mints = 5;
+        let num_erc721_mints = 1000;
 
         info!("Sending {num_erc721_mints} ERC721 mints ...");
-        let _fail_fast = self.config.simulation.clone().unwrap_or_default().fail_fast;
+        let _fail_fast = self.config.simulation.fail_fast;
 
         let start = SystemTime::now();
 
@@ -385,13 +390,11 @@ impl GatlingShooter {
     async fn create_accounts<'a>(
         &mut self,
         _simulation_report: &'a mut SimulationReport,
-        account_details: CreateAccounts,
+        num_accounts: u32,
     ) -> Result<()> {
-        info!("Creating {} accounts", account_details.num_accounts);
+        info!("Creating {} accounts", num_accounts);
 
-        // let salt = &self.config.deployer.as_ref().unwrap().salt;
-
-        for i in 0..account_details.num_accounts {
+        for i in 0..num_accounts {
             self.account.set_block_id(BlockId::Tag(BlockTag::Pending));
 
             let account_factory = OpenZeppelinAccountFactory::new(
@@ -423,6 +426,7 @@ impl GatlingShooter {
     }
 
     async fn declare_contract_legacy<'a>(&mut self, contract_path: &str) {
+        debug!("Declaring contract from path: {}", contract_path);
         let contract_artifact: LegacyContractClass =
             serde_json::from_reader(std::fs::File::open(contract_path).unwrap()).unwrap();
 
@@ -437,7 +441,7 @@ impl GatlingShooter {
             .await
         {
             Ok(tx_resp) => {
-                info!("Declared Contract TX: {:?}", tx_resp.transaction_hash);
+                info!("Declared Contract class_hash: {:?}", tx_resp.class_hash);
             }
             Err(AccountError::Provider(ProviderError::StarknetError(
                 StarknetErrorWithMessage {

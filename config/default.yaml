@@ -4,10 +4,11 @@ rpc:
 simulation:
   fail_fast: true
   setup:
-    create_accounts:
-      num_accounts: 1
+    erc20_contract_path: contracts/v0/ERC20.json
+    erc721_contract_path: contracts/v0/ERC721.json
+    account_contract_path: contracts/v0/OpenzeppelinAccount.json
+    num_accounts: 1
 
 deployer:
   address: "0x0000000000000000000000000000000000000000000000000000000000000002"
   signing_key: "0x00c1cf1490de1352865301bb8705143f3ef938f97fdf892f1090dcb5ac7bcd1d"
-  salt: 123
