@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, time::SystemTime};
 
 use color_eyre::{eyre::eyre, Result};
 use log::{info, debug};
@@ -12,7 +12,7 @@ use starknet::providers::{jsonrpc::HttpTransport, JsonRpcClient, Provider};
 use starknet::providers::{MaybeUnknownErrorCode, ProviderError};
 
 use std::time::Duration;
-use sysinfo::{CpuExt, ProcessExt, System, SystemExt};
+use sysinfo::{CpuExt, System, SystemExt};
 
 /// Cairo string for "STARKNET_CONTRACT_ADDRESS"
 /// Used to calculate contract addresses
@@ -32,8 +32,7 @@ const ADDR_BOUND: FieldElement = FieldElement::from_mont([
     576459263475590224,
 ]);
 
-// TODO: move to some more suitable place
-// Copied from starknet-rs since it's not public
+/// Copied from starknet-rs since it's not public
 pub fn calculate_contract_address(
     salt: FieldElement,
     class_hash: FieldElement,
@@ -85,12 +84,19 @@ pub fn pretty_print_hashmap(sysinfo: &HashMap<String, String>) {
     }
 }
 
-// TODO: add timeout
+const WAIT_FOR_TX_TIMEOUT: Duration = Duration::from_secs(60);
+
 pub async fn wait_for_tx(
     provider: &JsonRpcClient<HttpTransport>,
     tx_hash: FieldElement,
 ) -> Result<&str> {
+    let start = SystemTime::now();
+
     loop {
+        if start.elapsed().unwrap() >= WAIT_FOR_TX_TIMEOUT {
+            return Err(eyre!("Timeout while waiting for transaction {tx_hash:#064x}"))
+        }
+
         match provider.get_transaction_receipt(tx_hash).await {
             Ok(Receipt(receipt)) => {
                 let status = match receipt {
@@ -103,7 +109,7 @@ pub async fn wait_for_tx(
 
                 match status {
                     TransactionStatus::Pending => {
-                        debug!("Waiting for transaction to be mined");
+                        debug!("Waiting for transaction {tx_hash:#064x} to be mined");
                         tokio::time::sleep(Duration::from_secs(1)).await;
                     }
                     TransactionStatus::AcceptedOnL2 | TransactionStatus::AcceptedOnL1 => {
@@ -115,14 +121,13 @@ pub async fn wait_for_tx(
                 }
             }
             Ok(PendingReceipt(_)) => {
-                debug!("Waiting for transaction to be mined");
+                debug!("Waiting for transaction {tx_hash:#064x} to be mined");
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }
-            // TODO: set a timeout for the transaction to show up
             Err(ProviderError::StarknetError(e)) => {
                 if let MaybeUnknownErrorCode::Known(e) = e.code {
                     if e == StarknetError::TransactionHashNotFound {
-                        debug!("Waiting for transaction to show up");
+                        debug!("Waiting for transaction {tx_hash:#064x} to show up");
                         tokio::time::sleep(Duration::from_secs(1)).await;
                     }
                 }
