@@ -29,10 +29,7 @@ use std::time::SystemTime;
 
 use url::Url;
 
-// TODO: Read the contract addresses from the deployed contracts
-// TODO: move the public key and max_fee to the config file
-pub static FEE_TOKEN_ADDRESS: FieldElement =
-    felt!("0x49d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7");
+// TODO: move to the config file
 pub static MAX_FEE: FieldElement = felt!("0xfffffffffff");
 
 /// Shoot the load test simulation.
@@ -145,7 +142,7 @@ impl GatlingShooter {
         };
 
         // TODO: implement deploy_erc20
-        let erc20_address = self.deploy_erc721(erc721_class_hash).await?;
+        let erc20_address = self.deploy_erc20(erc721_class_hash).await?;
         let erc721_address = self.deploy_erc721(erc721_class_hash).await?;
 
         let environment = GatlingEnvironment {
@@ -253,33 +250,28 @@ impl GatlingShooter {
         &mut self,
         _simulation_report: &'a mut SimulationReport,
     ) -> Result<Vec<FieldElement>> {
+        let environment = self.environment()?;
+
         let num_erc20_transfers = 1000;
 
         info!("Sending {num_erc20_transfers} ERC20 transfers ...");
         let _fail_fast = self.config.simulation.fail_fast;
-
-        // TODO: use deployed address instead of hardcoded
-        let address = felt!("0x0389a894d597c962b3873b703d9682e49b95ab1f0e5242a7dd512ecf7186294e");
 
         let start = SystemTime::now();
 
         let mut transactions = Vec::new();
 
         for _ in 0..num_erc20_transfers {
-            let transaction_hash = self.transfer(address).await?;
+            let transaction_hash = self.transfer(environment.erc20_address).await?;
             transactions.push(transaction_hash);
         }
 
-        let mut took = start.elapsed().unwrap().as_secs();
-        if took == 0 {
-            took = 1;
-        }
-
+        let took = start.elapsed().unwrap().as_secs_f32();
         info!(
             "Took {} seconds to send {} transfer transaction, on average {} sent per second",
             took,
             num_erc20_transfers,
-            num_erc20_transfers / took
+            num_erc20_transfers as f32 / took
         );
 
         Ok(transactions)
@@ -306,30 +298,27 @@ impl GatlingShooter {
             transactions.push(transaction_hash);
         }
 
-        let mut took = start.elapsed().unwrap().as_secs();
-        if took == 0 {
-            took = 1;
-        }
-
+        let took = start.elapsed().unwrap().as_secs_f32();
         info!(
             "Took {} seconds to send {} mint transaction, on average {} sent per second",
             took,
             num_erc721_mints,
-            num_erc721_mints / took
+            num_erc721_mints as f32 / took
         );
+
         Ok(transactions)
     }
 
-    async fn transfer(&mut self, address: FieldElement) -> Result<FieldElement> {
+    async fn transfer(&mut self, contract_address: FieldElement) -> Result<FieldElement> {
         debug!(
             "Transferring to address={:#064x} with nonce={}",
-            address, self.nonce
+            contract_address, self.nonce
         );
 
         let call = Call {
-            to: FEE_TOKEN_ADDRESS,
+            to: contract_address,
             selector: selector!("transfer"),
-            calldata: vec![address, felt!("0x1000000"), felt!("0x0")],
+            calldata: vec![felt!("0x2"), felt!("0x1000000"), felt!("0x0")],
         };
 
         let result = self
@@ -348,15 +337,15 @@ impl GatlingShooter {
     async fn mint(
         &mut self,
         token_id: FieldElement,
-        nft_contract_address: FieldElement,
+        contract_address: FieldElement,
     ) -> Result<FieldElement> {
         debug!(
             "Minting token_id={} for address={:#064x} with nonce={}",
-            token_id, nft_contract_address, self.nonce
+            token_id, contract_address, self.nonce
         );
 
         let call = Call {
-            to: nft_contract_address,
+            to: contract_address,
             selector: selector!("mint"),
             calldata: vec![felt!("0x2"), token_id, felt!("0x0")],
         };
@@ -406,6 +395,41 @@ impl GatlingShooter {
         info!("Calculated address={:#064x}", address);
         Ok(address)
     }
+
+    async fn deploy_erc20(&mut self, class_hash: FieldElement) -> Result<FieldElement> {
+        let contract_factory = ContractFactory::new(class_hash, self.account.clone());
+
+        let salt = get_rng();
+
+        let constructor_args = &[felt!("0xa1"), felt!("0xa2"), self.account.address()];
+        let unique = false;
+
+        let deploy = contract_factory.deploy(constructor_args, salt, unique);
+
+        let max_fee = MAX_FEE + felt!("1");
+
+        info!(
+            "Deploying erc20 with nonce={:#064x} and max_fee={max_fee:#064x}",
+            self.nonce
+        );
+
+        let result = deploy.nonce(self.nonce).max_fee(max_fee).send().await?;
+        self.nonce = self.nonce + felt!("1");
+        info!("{result:#?}");
+
+        let result_str = wait_for_tx(&self.starknet_rpc, result.transaction_hash).await?;
+        info!(
+            "result_str={result_str:#?}, transaction_hash={:#064x}",
+            result.transaction_hash
+        );
+
+        let address = calculate_contract_address(salt, class_hash, constructor_args);
+
+        info!("Calculated address={:#064x}", address);
+        Ok(address)
+    }
+
+
 
     /// Create accounts.
     async fn create_accounts<'a>(
