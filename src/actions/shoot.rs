@@ -1,7 +1,7 @@
 use crate::config::GatlingConfig;
 use crate::generators::get_rng;
 use crate::utils::{calculate_contract_address, get_sysinfo, pretty_print_hashmap, wait_for_tx};
-use color_eyre::Result;
+use color_eyre::{eyre::eyre, Result};
 
 use log::{debug, info, warn};
 
@@ -31,17 +31,9 @@ use url::Url;
 
 // TODO: Read the contract addresses from the deployed contracts
 // TODO: move the public key and max_fee to the config file
-pub static NFT_TOKEN_ADDRESS: FieldElement =
-    felt!("0x040e59c2c182a58fb0a74349bfa4769cbbcba32547591dd3fb1def8623997d02");
 pub static FEE_TOKEN_ADDRESS: FieldElement =
     felt!("0x49d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7");
-pub static OZ_CLASS_HASH: FieldElement =
-    felt!("0x045e3ac97b1c575540dbf6b6f089f390f00fa98928415bb91a27a43790b52f30");
-pub static PUBLIC_KEY: FieldElement =
-    felt!("0x3603a2692a2ae60abb343e832ee53b55d6b25f02a3ef1565ec691edc7a209b2");
 pub static MAX_FEE: FieldElement = felt!("0xfffffffffff");
-
-pub static NFT_CLASS_HASH: FieldElement = felt!("0x80000");
 
 /// Shoot the load test simulation.
 pub async fn shoot(config: GatlingConfig) -> Result<SimulationReport> {
@@ -66,14 +58,17 @@ pub struct GatlingShooter {
     signer: LocalWallet,
     account: SingleOwnerAccount<Arc<JsonRpcClient<HttpTransport>>, LocalWallet>,
     nonce: FieldElement,
-    erc721_address: Option<FieldElement>,
+    environment: Option<GatlingEnvironment>, // Will be populated in setup phase
 }
 
+#[derive(Clone)]
 pub struct GatlingEnvironment {
     erc20_class_hash: FieldElement,
     erc721_class_hash: FieldElement,
+    account_class_hash: FieldElement,
     erc20_address: FieldElement,
     erc721_address: FieldElement,
+    accounts: Vec<FieldElement>,
 }
 
 impl GatlingShooter {
@@ -97,14 +92,21 @@ impl GatlingShooter {
 
         let nonce = account.get_nonce().await?;
 
+        // TODO: Do we need signer and starknet_rpc, they are already part of account?
         Ok(Self {
             config,
             starknet_rpc,
             signer,
             account,
             nonce,
-            erc721_address: None,
+            environment: None,
         })
+    }
+
+    pub fn environment(&self) -> Result<GatlingEnvironment> {
+        self.environment.clone().ok_or(eyre!(
+            "Environment is not yet populated, you should run the setup function first"
+        ))
     }
 
     /// Setup the simulation.
@@ -119,23 +121,43 @@ impl GatlingShooter {
 
         let setup_config = self.config.clone().simulation.setup;
 
-        self.declare_contract_legacy(&setup_config.erc20_contract_path)
-            .await;
+        let erc20_class_hash = self
+            .declare_contract_legacy(&setup_config.erc20_contract_path)
+            .await?;
 
-        self.declare_contract_legacy(&setup_config.erc721_contract_path)
-            .await;
+        let erc721_class_hash = self
+            .declare_contract_legacy(&setup_config.erc721_contract_path)
+            .await?;
 
-        if setup_config.num_accounts > 0 {
-            self.declare_contract_legacy(&setup_config.account_contract_path)
-                .await;
+        let account_class_hash = self
+            .declare_contract_legacy(&setup_config.account_contract_path)
+            .await?;
 
-            self.create_accounts(simulation_report, setup_config.num_accounts)
-                .await?;
-        }
+        let accounts = if setup_config.num_accounts > 0 {
+            self.create_accounts(
+                account_class_hash,
+                simulation_report,
+                setup_config.num_accounts,
+            )
+            .await?
+        } else {
+            Vec::new()
+        };
 
-        let erc721_address = self.deploy_erc721().await?;
+        // TODO: implement deploy_erc20
+        let erc20_address = self.deploy_erc721(erc721_class_hash).await?;
+        let erc721_address = self.deploy_erc721(erc721_class_hash).await?;
 
-        self.erc721_address = Some(erc721_address);
+        let environment = GatlingEnvironment {
+            erc20_class_hash,
+            erc721_class_hash,
+            account_class_hash,
+            erc20_address,
+            erc721_address,
+            accounts,
+        };
+
+        self.environment = Some(environment);
 
         Ok(())
     }
@@ -267,6 +289,8 @@ impl GatlingShooter {
         &mut self,
         _simulation_report: &'a mut SimulationReport,
     ) -> Result<Vec<FieldElement>> {
+        let environment = self.environment()?;
+
         let num_erc721_mints = 1000;
 
         info!("Sending {num_erc721_mints} ERC721 mints ...");
@@ -276,12 +300,9 @@ impl GatlingShooter {
 
         let mut transactions = Vec::new();
 
-        // TODO: don't use unwrap
-        let address = self.erc721_address.unwrap();
-
         for _ in 0..num_erc721_mints {
             let token_id = get_rng();
-            let transaction_hash = self.mint(token_id, address).await?;
+            let transaction_hash = self.mint(token_id, environment.erc721_address).await?;
             transactions.push(transaction_hash);
         }
 
@@ -353,8 +374,8 @@ impl GatlingShooter {
         Ok(result.transaction_hash)
     }
 
-    async fn deploy_erc721(&mut self) -> Result<FieldElement> {
-        let contract_factory = ContractFactory::new(NFT_CLASS_HASH, self.account.clone());
+    async fn deploy_erc721(&mut self, class_hash: FieldElement) -> Result<FieldElement> {
+        let contract_factory = ContractFactory::new(class_hash, self.account.clone());
 
         let salt = get_rng();
 
@@ -380,7 +401,7 @@ impl GatlingShooter {
             result.transaction_hash
         );
 
-        let address = calculate_contract_address(salt, NFT_CLASS_HASH, constructor_args);
+        let address = calculate_contract_address(salt, class_hash, constructor_args);
 
         info!("Calculated address={:#064x}", address);
         Ok(address)
@@ -389,16 +410,20 @@ impl GatlingShooter {
     /// Create accounts.
     async fn create_accounts<'a>(
         &mut self,
+        class_hash: FieldElement,
         _simulation_report: &'a mut SimulationReport,
         num_accounts: u32,
-    ) -> Result<()> {
+    ) -> Result<Vec<FieldElement>> {
         info!("Creating {} accounts", num_accounts);
+
+        let mut accounts = Vec::new();
 
         for i in 0..num_accounts {
             self.account.set_block_id(BlockId::Tag(BlockTag::Pending));
 
+            // TODO: Check if OpenZepplinAccountFactory could be used with other type of accounts ? Or should we require users to use OpenZepplinAccountFactory ?
             let account_factory = OpenZeppelinAccountFactory::new(
-                OZ_CLASS_HASH,
+                class_hash,
                 chain_id::TESTNET,
                 &self.signer,
                 &self.starknet_rpc,
@@ -416,23 +441,27 @@ impl GatlingShooter {
 
             let result = deploy.send().await?;
 
+            accounts.push(result.contract_address);
+
             debug!("Waiting for deploy account tx");
             wait_for_tx(&self.starknet_rpc, result.transaction_hash).await?;
 
             self.transfer(deploy.address()).await?;
         }
 
-        Ok(())
+        Ok(accounts)
     }
 
-    async fn declare_contract_legacy<'a>(&mut self, contract_path: &str) {
+    async fn declare_contract_legacy<'a>(&mut self, contract_path: &str) -> Result<FieldElement> {
         debug!("Declaring contract from path: {}", contract_path);
-        let contract_artifact: LegacyContractClass =
-            serde_json::from_reader(std::fs::File::open(contract_path).unwrap()).unwrap();
+        let file = std::fs::File::open(contract_path)?;
+
+        let contract_artifact: LegacyContractClass = serde_json::from_reader(file)?;
+
+        // TODO: get the class_hash from the already declared error
+        let class_hash = contract_artifact.class_hash()?;
 
         self.account.set_block_id(BlockId::Tag(BlockTag::Pending));
-
-        let class_hash = contract_artifact.class_hash();
 
         match self
             .account
@@ -442,6 +471,7 @@ impl GatlingShooter {
         {
             Ok(tx_resp) => {
                 info!("Declared Contract class_hash: {:?}", tx_resp.class_hash);
+                Ok(tx_resp.class_hash)
             }
             Err(AccountError::Provider(ProviderError::StarknetError(
                 StarknetErrorWithMessage {
@@ -450,11 +480,12 @@ impl GatlingShooter {
                 },
             ))) => {
                 warn!("Contract already declared class_hash={:?}", class_hash);
+                Ok(class_hash)
             }
             Err(e) => {
                 panic!("Could not declare contract: {e}");
             }
-        };
+        }
     }
 }
 
