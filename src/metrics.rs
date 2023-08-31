@@ -48,7 +48,7 @@ lazy_static! {
                 name: "Average Extrinsics per block".to_string(),
                 unit: "extrinsics/block".to_string(),
                 compute: average_tbs,
-            },
+            }
         ];
 
         metrics

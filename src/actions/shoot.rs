@@ -1,11 +1,12 @@
 use crate::config::GatlingConfig;
 use crate::generators::get_rng;
-use crate::utils::{calculate_contract_address, get_sysinfo, pretty_print_hashmap, wait_for_tx};
+use crate::utils::{compute_contract_address, get_sysinfo, pretty_print_hashmap, wait_for_tx};
 use color_eyre::{eyre::eyre, Result};
 
 use log::{debug, info, warn};
 
 use std::collections::HashMap;
+use std::path::Path;
 
 use crate::metrics::compute_all_metrics;
 
@@ -31,7 +32,7 @@ use std::time::SystemTime;
 
 use url::Url;
 
-// TODO: move to the config file
+// Used to bypass validation
 pub static MAX_FEE: FieldElement = felt!("0xfffffffffff");
 
 /// Shoot the load test simulation.
@@ -75,7 +76,6 @@ impl GatlingShooter {
             FieldElement::from_hex_be(config.deployer.signing_key.as_str()).unwrap_or_default(),
         ));
 
-        // implement let account = Arc::new(account); instead of signer
         let address =
             FieldElement::from_hex_be(config.deployer.address.as_str()).unwrap_or_default();
 
@@ -122,7 +122,7 @@ impl GatlingShooter {
     }
 
     /// Setup the simulation.
-    async fn setup<'a>(&mut self, simulation_report: &'a mut SimulationReport) -> Result<()> {
+    async fn setup<'a>(&mut self, _simulation_report: &'a mut SimulationReport) -> Result<()> {
         let chain_id = self.starknet_rpc.chain_id().await?.to_bytes_be();
         let block_number = self.starknet_rpc.block_number().await?;
         info!(
@@ -146,12 +146,8 @@ impl GatlingShooter {
             .await?;
 
         let accounts = if setup_config.num_accounts > 0 {
-            self.create_accounts(
-                account_class_hash,
-                simulation_report,
-                setup_config.num_accounts,
-            )
-            .await?
+            self.create_accounts(account_class_hash, setup_config.num_accounts)
+                .await?
         } else {
             Vec::new()
         };
@@ -189,15 +185,12 @@ impl GatlingShooter {
         info!("Checking transactions ...");
         let now = SystemTime::now();
         for transaction in transactions {
-            let result = wait_for_tx(&self.starknet_rpc, transaction)
-                .await
-                .expect(format!("Transaction failed {transaction:#064x}").as_str());
-
-            debug!("{:#?} {:#064x}", result, transaction)
+            wait_for_tx(&self.starknet_rpc, transaction).await.unwrap();
+            debug!("Transaction {:#064x} accepted", transaction)
         }
         info!(
             "Took {} seconds to check transactions",
-            now.elapsed().unwrap().as_secs()
+            now.elapsed().unwrap().as_secs_f32()
         );
     }
 
@@ -225,7 +218,7 @@ impl GatlingShooter {
     /// Run the simulation.
     async fn run<'a>(&mut self, simulation_report: &'a mut SimulationReport) -> Result<()> {
         info!("Firing !");
-        let transactions = self.run_erc20(simulation_report).await?;
+        let transactions = self.run_erc20().await?;
         self.check_transactions(transactions).await;
         // TODO: make it configurable
         let num_blocks = 4;
@@ -241,7 +234,7 @@ impl GatlingShooter {
                 .collect(),
         );
 
-        let transactions = self.run_erc721(simulation_report).await?;
+        let transactions = self.run_erc721().await?;
         self.check_transactions(transactions).await;
 
         let num_tx_per_block = self.get_num_tx_per_block(num_blocks).await?;
@@ -257,15 +250,12 @@ impl GatlingShooter {
         Ok(())
     }
 
-    async fn run_erc20<'a>(
-        &mut self,
-        _simulation_report: &'a mut SimulationReport,
-    ) -> Result<Vec<FieldElement>> {
+    async fn run_erc20(&mut self) -> Result<Vec<FieldElement>> {
         let environment = self.environment()?;
 
         let num_erc20_transfers = 1000;
 
-        info!("Sending {num_erc20_transfers} ERC20 transfers ...");
+        info!("Sending {num_erc20_transfers} ERC20 transfer transactions ...");
         let _fail_fast = self.config.simulation.fail_fast;
 
         let start = SystemTime::now();
@@ -273,13 +263,15 @@ impl GatlingShooter {
         let mut transactions = Vec::new();
 
         for _ in 0..num_erc20_transfers {
-            let transaction_hash = self.transfer(environment.erc20_address).await?;
+            let transaction_hash = self
+                .transfer(environment.erc20_address, self.get_random_account_address())
+                .await?;
             transactions.push(transaction_hash);
         }
 
         let took = start.elapsed().unwrap().as_secs_f32();
         info!(
-            "Took {} seconds to send {} transfer transaction, on average {} sent per second",
+            "Took {} seconds to send {} transfer transactions, on average {} sent per second",
             took,
             num_erc20_transfers,
             num_erc20_transfers as f32 / took
@@ -288,15 +280,12 @@ impl GatlingShooter {
         Ok(transactions)
     }
 
-    async fn run_erc721<'a>(
-        &mut self,
-        _simulation_report: &'a mut SimulationReport,
-    ) -> Result<Vec<FieldElement>> {
+    async fn run_erc721<'a>(&mut self) -> Result<Vec<FieldElement>> {
         let environment = self.environment()?;
 
         let num_erc721_mints = 1000;
 
-        info!("Sending {num_erc721_mints} ERC721 mints ...");
+        info!("Sending {num_erc721_mints} ERC721 mint transactions ...");
         let _fail_fast = self.config.simulation.fail_fast;
 
         let start = SystemTime::now();
@@ -310,7 +299,7 @@ impl GatlingShooter {
 
         let took = start.elapsed().unwrap().as_secs_f32();
         info!(
-            "Took {} seconds to send {} mint transaction, on average {} sent per second",
+            "Took {} seconds to send {} mint transactions, on average {} sent per second",
             took,
             num_erc721_mints,
             num_erc721_mints as f32 / took
@@ -319,20 +308,22 @@ impl GatlingShooter {
         Ok(transactions)
     }
 
-    async fn transfer(&mut self, contract_address: FieldElement) -> Result<FieldElement> {
+    async fn transfer(
+        &mut self,
+        contract_address: FieldElement,
+        account_address: FieldElement,
+    ) -> Result<FieldElement> {
         debug!(
             "Transferring to address={:#064x} with nonce={}",
-            contract_address, self.nonce
+            account_address, self.nonce
         );
+
+        let (amount_low, amount_high) = (felt!("0x1000000"), felt!("0x0"));
 
         let call = Call {
             to: contract_address,
             selector: selector!("transfer"),
-            calldata: vec![
-                self.get_random_account_address(),
-                felt!("0x1000000"),
-                felt!("0x0"),
-            ],
+            calldata: vec![account_address, amount_low, amount_high],
         };
 
         let result = self
@@ -354,7 +345,7 @@ impl GatlingShooter {
             contract_address, self.nonce
         );
 
-        let (token_id_low, token_id_high) = (get_rng(), get_rng());
+        let (token_id_low, token_id_high) = (get_rng(), felt!("0x0000"));
 
         let call = Call {
             to: contract_address,
@@ -389,21 +380,21 @@ impl GatlingShooter {
 
         let deploy = contract_factory.deploy(constructor_args, salt, unique);
 
-        info!("Deploying erc721 with nonce={}", self.nonce);
+        info!("Deploying ERC721 with nonce={}", self.nonce);
 
         let result = deploy.nonce(self.nonce).max_fee(MAX_FEE).send().await?;
-        self.nonce = self.nonce + felt!("1");
-        info!("{result:#?}");
+        wait_for_tx(&self.starknet_rpc, result.transaction_hash).await?;
 
-        let result_str = wait_for_tx(&self.starknet_rpc, result.transaction_hash).await?;
-        info!(
-            "result_str={result_str:#?}, transaction_hash={:#064x}",
+        self.nonce = self.nonce + felt!("1");
+
+        debug!(
+            "Deploy ERC721 transaction accepted {:#064x}",
             result.transaction_hash
         );
 
-        let address = calculate_contract_address(salt, class_hash, constructor_args);
+        let address = compute_contract_address(salt, class_hash, constructor_args);
 
-        info!("Calculated address={:#064x}", address);
+        info!("ERC721 contract deployed at address {:#064x}", address);
         Ok(address)
     }
 
@@ -430,21 +421,21 @@ impl GatlingShooter {
 
         let deploy = contract_factory.deploy(constructor_args, salt, unique);
 
-        info!("Deploying erc20 with nonce={}", self.nonce);
+        info!("Deploying ERC20 contract with nonce={}", self.nonce);
 
         let result = deploy.nonce(self.nonce).max_fee(MAX_FEE).send().await?;
-        self.nonce = self.nonce + felt!("1");
-        info!("{result:#?}");
+        wait_for_tx(&self.starknet_rpc, result.transaction_hash).await?;
 
-        let result_str = wait_for_tx(&self.starknet_rpc, result.transaction_hash).await?;
-        info!(
-            "result_str={result_str:#?}, transaction_hash={:#064x}",
+        self.nonce = self.nonce + felt!("1");
+
+        debug!(
+            "Deploy ERC20 transaction accepted {:#064x}",
             result.transaction_hash
         );
 
-        let address = calculate_contract_address(salt, class_hash, constructor_args);
+        let address = compute_contract_address(salt, class_hash, constructor_args);
 
-        info!("Calculated address={:#064x}", address);
+        info!("ERC20 contract deployed at address {:#064x}", address);
         Ok(address)
     }
 
@@ -452,12 +443,11 @@ impl GatlingShooter {
     async fn create_accounts<'a>(
         &mut self,
         class_hash: FieldElement,
-        _simulation_report: &'a mut SimulationReport,
-        num_accounts: u32,
+        num_accounts: usize,
     ) -> Result<Vec<FieldElement>> {
         info!("Creating {} accounts", num_accounts);
 
-        let mut accounts = Vec::new();
+        let mut accounts = Vec::with_capacity(num_accounts);
 
         for i in 0..num_accounts {
             self.account.set_block_id(BlockId::Tag(BlockTag::Pending));
@@ -474,27 +464,34 @@ impl GatlingShooter {
             let salt = get_rng();
 
             let deploy = account_factory.deploy(salt);
-            info!(
-                "Deploying account {i} with salt={} address={:#064x}",
-                salt,
-                deploy.address()
-            );
+            info!("Deploying account {i} with salt={}", salt,);
 
             let result = deploy.send().await?;
 
             accounts.push(result.contract_address);
 
-            debug!("Waiting for deploy account tx");
             wait_for_tx(&self.starknet_rpc, result.transaction_hash).await?;
 
-            // self.transfer(deploy.address()).await?;
+            info!("Account {i} deployed at address {:#064x}", deploy.address());
+
+            self.transfer(
+                self.config.simulation.setup.fee_token_address,
+                deploy.address(),
+            )
+            .await?;
         }
 
         Ok(accounts)
     }
 
-    async fn declare_contract_legacy<'a>(&mut self, contract_path: &str) -> Result<FieldElement> {
-        debug!("Declaring contract from path: {}", contract_path);
+    async fn declare_contract_legacy<'a>(
+        &mut self,
+        contract_path: impl AsRef<Path>,
+    ) -> Result<FieldElement> {
+        info!(
+            "Declaring contract from path {}",
+            contract_path.as_ref().display()
+        );
         let file = std::fs::File::open(contract_path)?;
 
         let contract_artifact: LegacyContractClass = serde_json::from_reader(file)?;
@@ -511,7 +508,10 @@ impl GatlingShooter {
             .await
         {
             Ok(tx_resp) => {
-                info!("Declared Contract class_hash: {:?}", tx_resp.class_hash);
+                info!(
+                    "Contract declared successfully class_hash={:#064x}",
+                    tx_resp.class_hash
+                );
                 Ok(tx_resp.class_hash)
             }
             Err(AccountError::Provider(ProviderError::StarknetError(
@@ -520,7 +520,7 @@ impl GatlingShooter {
                     ..
                 },
             ))) => {
-                warn!("Contract already declared class_hash={:?}", class_hash);
+                warn!("Contract already declared class_hash={:#064x}", class_hash);
                 Ok(class_hash)
             }
             Err(e) => {

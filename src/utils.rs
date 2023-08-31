@@ -1,15 +1,18 @@
 use std::{collections::HashMap, time::SystemTime};
 
 use color_eyre::{eyre::eyre, Result};
-use log::{info, debug};
-use starknet::core::types::{
-    MaybePendingTransactionReceipt::{PendingReceipt, Receipt},
-    TransactionReceipt::{Declare, Deploy, DeployAccount, Invoke, L1Handler},
-};
+use log::{debug, info};
 use starknet::core::types::{StarknetError, TransactionStatus};
 use starknet::core::{crypto::compute_hash_on_elements, types::FieldElement};
 use starknet::providers::{jsonrpc::HttpTransport, JsonRpcClient, Provider};
 use starknet::providers::{MaybeUnknownErrorCode, ProviderError};
+use starknet::{
+    core::types::{
+        MaybePendingTransactionReceipt::{PendingReceipt, Receipt},
+        TransactionReceipt::{Declare, Deploy, DeployAccount, Invoke, L1Handler},
+    },
+    providers::StarknetErrorWithMessage,
+};
 
 use std::time::Duration;
 use sysinfo::{CpuExt, System, SystemExt};
@@ -33,7 +36,7 @@ const ADDR_BOUND: FieldElement = FieldElement::from_mont([
 ]);
 
 /// Copied from starknet-rs since it's not public
-pub fn calculate_contract_address(
+pub fn compute_contract_address(
     salt: FieldElement,
     class_hash: FieldElement,
     constructor_calldata: &[FieldElement],
@@ -85,16 +88,19 @@ pub fn pretty_print_hashmap(sysinfo: &HashMap<String, String>) {
 }
 
 const WAIT_FOR_TX_TIMEOUT: Duration = Duration::from_secs(30);
+const WAIT_FOR_TX_SLEEP: Duration = Duration::from_secs(2);
 
 pub async fn wait_for_tx(
     provider: &JsonRpcClient<HttpTransport>,
     tx_hash: FieldElement,
-) -> Result<&str> {
+) -> Result<()> {
     let start = SystemTime::now();
 
     loop {
         if start.elapsed().unwrap() >= WAIT_FOR_TX_TIMEOUT {
-            return Err(eyre!("Timeout while waiting for transaction {tx_hash:#064x}"))
+            return Err(eyre!(
+                "Timeout while waiting for transaction {tx_hash:#064x}"
+            ));
         }
 
         match provider.get_transaction_receipt(tx_hash).await {
@@ -109,31 +115,34 @@ pub async fn wait_for_tx(
 
                 match status {
                     TransactionStatus::Pending => {
-                        debug!("Waiting for transaction {tx_hash:#064x} to be mined");
-                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        debug!("Waiting for transaction {tx_hash:#064x} to be accepted");
+                        tokio::time::sleep(WAIT_FOR_TX_SLEEP).await;
                     }
                     TransactionStatus::AcceptedOnL2 | TransactionStatus::AcceptedOnL1 => {
-                        return Ok("Transaction accepted")
+                        return Ok(())
                     }
                     TransactionStatus::Rejected => {
-                        return Err(eyre!("Transaction has been rejected"));
+                        return Err(eyre!(format!("Transaction {tx_hash:#064x} has been rejected")));
                     }
                 }
             }
             Ok(PendingReceipt(_)) => {
-                debug!("Waiting for transaction {tx_hash:#064x} to be mined");
-                tokio::time::sleep(Duration::from_secs(1)).await;
+                debug!("Waiting for transaction {tx_hash:#064x} to be accepted");
+                tokio::time::sleep(WAIT_FOR_TX_SLEEP).await;
             }
-            Err(ProviderError::StarknetError(e)) => {
-                if let MaybeUnknownErrorCode::Known(e) = e.code {
-                    if e == StarknetError::TransactionHashNotFound {
-                        debug!("Waiting for transaction {tx_hash:#064x} to show up");
-                        tokio::time::sleep(Duration::from_secs(1)).await;
-                    }
-                }
+            Err(ProviderError::StarknetError(StarknetErrorWithMessage {
+                code: MaybeUnknownErrorCode::Known(StarknetError::TransactionHashNotFound),
+                ..
+            })) => {
+                debug!("Waiting for transaction {tx_hash:#064x} to show up");
+                tokio::time::sleep(WAIT_FOR_TX_SLEEP).await;
             }
             // TODO: use wrap_err
-            Err(err) => return Err(eyre!(err)),
+            Err(err) => {
+                return Err(eyre!(err).wrap_err(format!(
+                    "Error while waiting for transaction {tx_hash:#064x}"
+                )))
+            }
         }
     }
 }

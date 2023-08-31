@@ -1,8 +1,11 @@
 //! General configuration
 
+use std::path::PathBuf;
+
 use color_eyre::eyre::Result;
 use config::{builder::DefaultState, Config, ConfigBuilder, File};
 use serde_derive::Deserialize;
+use starknet::core::types::FieldElement;
 
 /// Configuration for the application.
 #[derive(Debug, Deserialize, Default, Clone)]
@@ -13,18 +16,6 @@ pub struct GatlingConfig {
     pub simulation: Simulation,
     /// The fee paying account
     pub deployer: Deployer,
-}
-
-pub enum Wait {
-    Seconds(u32),
-    Boolean(bool),
-}
-
-pub struct Benchmark {
-    pub name: String,
-    pub num: u32,
-    pub metrics: Vec<String>,
-    pub wait: Wait,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -50,10 +41,11 @@ pub struct Simulation {
 
 #[derive(Debug, Deserialize, Default, Clone)]
 pub struct Setup {
-    pub erc20_contract_path: String,
-    pub erc721_contract_path: String,
-    pub account_contract_path: String,
-    pub num_accounts: u32,
+    pub erc20_contract_path: PathBuf,
+    pub erc721_contract_path: PathBuf,
+    pub account_contract_path: PathBuf,
+    pub fee_token_address: FieldElement,
+    pub num_accounts: usize,
 }
 
 #[derive(Debug, Deserialize, Default, Clone)]
