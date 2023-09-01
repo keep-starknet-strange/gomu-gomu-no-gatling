@@ -77,10 +77,10 @@ pub fn get_sysinfo() -> HashMap<String, String> {
     sysinfo
 }
 
-pub fn pretty_print_hashmap(sysinfo: &HashMap<String, String>) {
-    let key_max_length = sysinfo.keys().map(|key| key.len()).max().unwrap();
+pub fn pretty_print_hashmap(map: &HashMap<String, String>) {
+    let key_max_length = map.keys().map(|key| key.len()).max().unwrap();
 
-    for (name, value) in sysinfo {
+    for (name, value) in map {
         info!("{:key_max_length$} : {}", name, value);
     }
 }

@@ -38,7 +38,7 @@ pub static MAX_FEE: FieldElement = felt!("0xfffffffffff");
 /// Shoot the load test simulation.
 pub async fn shoot(config: GatlingConfig) -> Result<SimulationReport> {
     info!("starting simulation with config: {:?}", config);
-    let mut shooter = GatlingShooter::new(config).await?;
+    let mut shooter = GatlingShooter::from_config(config).await?;
     let mut simulation_report = Default::default();
     // Trigger the setup phase.
     shooter.setup(&mut simulation_report).await?;
@@ -69,7 +69,7 @@ pub struct GatlingEnvironment {
 }
 
 impl GatlingShooter {
-    pub async fn new(config: GatlingConfig) -> Result<Self> {
+    pub async fn from_config(config: GatlingConfig) -> Result<Self> {
         let starknet_rpc = Arc::new(starknet_rpc_provider(Url::parse(&config.clone().rpc.url)?));
 
         let signer = LocalWallet::from(SigningKey::from_secret_scalar(config.deployer.signing_key));
@@ -167,11 +167,10 @@ impl GatlingShooter {
         info!("=> System <=");
         pretty_print_hashmap(&get_sysinfo());
 
-        info!("=> Metrics for ERC20 transfer <=");
-        pretty_print_hashmap(&simulation_report.reports["erc20"]);
-
-        info!("=> Metrics for ERC721 mint <=");
-        pretty_print_hashmap(&simulation_report.reports["erc721"]);
+        for (name, report) in &simulation_report.reports {
+            info!("=> Metrics for {name} <=");
+            pretty_print_hashmap(report);
+        }
 
         Ok(())
     }
@@ -189,16 +188,19 @@ impl GatlingShooter {
         );
     }
 
-    /// Get a Map of the number of transactions per block for the last `num_blocks` blocks
+    /// Get a Map of the number of transactions per block from `start_block` to
+    /// `end_block` (including both)
     /// This is meant to be used to calculate multiple metrics such as TPS and TPB
-    /// without hitting the StarkNet RPC too many times
+    /// without hitting the StarkNet RPC multiple times
     // TODO: add a cache to avoid hitting the RPC too many times
-    async fn get_num_tx_per_block(&self, num_blocks: u64) -> Result<HashMap<u64, u64>> {
+    async fn get_num_tx_per_block(
+        &self,
+        start_block: u64,
+        end_block: u64,
+    ) -> Result<HashMap<u64, u64>> {
         let mut map = HashMap::new();
 
-        let latest = self.starknet_rpc.block_number().await?;
-
-        for block_number in latest - num_blocks..latest {
+        for block_number in start_block..end_block {
             let n = self
                 .starknet_rpc
                 .get_block_transaction_count(BlockId::Number(block_number))
@@ -210,33 +212,105 @@ impl GatlingShooter {
         Ok(map)
     }
 
-    /// Run the simulation.
+    /// Run the benchmarks.
     async fn run<'a>(&mut self, simulation_report: &'a mut SimulationReport) -> Result<()> {
         info!("Firing !");
+        let metrics_for_last_blocks = self.config.run.metrics_for_last_blocks;
+
+        let start_block = self.starknet_rpc.block_number().await? + 1;
+
+        // Run ERC20 transfer transactions
+        let erc20_start_block = start_block;
         let transactions = self.run_erc20().await?;
         self.check_transactions(transactions).await;
-        // TODO: make it configurable
-        let num_blocks = 4;
+        let erc20_end_block = self.starknet_rpc.block_number().await?;
 
-        let num_tx_per_block = self.get_num_tx_per_block(num_blocks).await?;
-        let erc20_metrics = compute_all_metrics(num_tx_per_block);
+        // Run ERC721 mint transactions
+        let erc721_start_block = self.starknet_rpc.block_number().await? + 1;
+        let transactions = self.run_erc721().await?;
+        self.check_transactions(transactions).await;
+        let erc721_end_block = self.starknet_rpc.block_number().await?;
+
+        let end_block = erc721_end_block;
+
+        // Skip the first and last blocks from the metrics to make sure all
+        // the blocks are full
+        let num_tx_per_block = self
+            .get_num_tx_per_block(erc20_start_block + 1, erc20_end_block - 1)
+            .await?;
+        let metrics = compute_all_metrics(num_tx_per_block);
 
         simulation_report.reports.insert(
             "erc20".to_string(),
-            erc20_metrics
+            metrics
                 .iter()
                 .map(|(metric, value)| (metric.name.clone(), value.to_string()))
                 .collect(),
         );
 
-        let transactions = self.run_erc721().await?;
-        self.check_transactions(transactions).await;
 
-        let num_tx_per_block = self.get_num_tx_per_block(num_blocks).await?;
-        let erc721_metrics = compute_all_metrics(num_tx_per_block);
+        let num_erc20_blocks = erc20_end_block - erc20_start_block - 1;
+        if metrics_for_last_blocks > num_erc20_blocks {
+            warn!("Calculating ERC20 transfer metrics for the last {} blocks while only {} blocks have transactions, you should either use a lower number of blocks for the metrics or more transactions", metrics_for_last_blocks, num_erc20_blocks)
+        }
+
+        let num_tx_per_block = self
+            .get_num_tx_per_block(erc20_end_block - num_erc20_blocks, erc20_end_block - 1)
+            .await?;
+        let metrics = compute_all_metrics(num_tx_per_block);
+
+        simulation_report.reports.insert(
+            "erc20_last_blocks".to_string(),
+            metrics
+                .iter()
+                .map(|(metric, value)| (metric.name.clone(), value.to_string()))
+                .collect(),
+        );
+
+        // Skip the first and last blocks from the metrics to make sure all
+        // the blocks are full
+        let num_tx_per_block = self
+            .get_num_tx_per_block(erc721_start_block + 1, erc721_end_block - 1)
+            .await?;
+        let metrics = compute_all_metrics(num_tx_per_block);
+
         simulation_report.reports.insert(
             "erc721".to_string(),
-            erc721_metrics
+            metrics
+                .iter()
+                .map(|(metric, value)| (metric.name.clone(), value.to_string()))
+                .collect(),
+        );
+
+
+        let num_erc721_blocks = erc721_end_block - erc721_start_block - 1;
+        if metrics_for_last_blocks > num_erc721_blocks {
+            warn!("Calculating ERC721 mint metrics for the last {} blocks while only {} blocks have transactions, you should either use a lower number of blocks for the metrics or more transactions", metrics_for_last_blocks, num_erc721_blocks)
+        }
+
+        let num_tx_per_block = self
+            .get_num_tx_per_block(erc721_end_block - num_erc721_blocks, erc721_end_block - 1)
+            .await?;
+        let metrics = compute_all_metrics(num_tx_per_block);
+
+        simulation_report.reports.insert(
+            "erc721_last_blocks".to_string(),
+            metrics
+                .iter()
+                .map(|(metric, value)| (metric.name.clone(), value.to_string()))
+                .collect(),
+        );
+
+        // Skip the first and last blocks from the metrics to make sure all
+        // the blocks are full
+        let num_tx_per_block = self
+            .get_num_tx_per_block(start_block + 1, end_block - 1)
+            .await?;
+        let metrics = compute_all_metrics(num_tx_per_block);
+
+        simulation_report.reports.insert(
+            "full".to_string(),
+            metrics
                 .iter()
                 .map(|(metric, value)| (metric.name.clone(), value.to_string()))
                 .collect(),
@@ -248,7 +322,7 @@ impl GatlingShooter {
     async fn run_erc20(&mut self) -> Result<Vec<FieldElement>> {
         let environment = self.environment()?;
 
-        let num_erc20_transfers = 1000;
+        let num_erc20_transfers = self.config.run.num_erc20_transfers;
 
         info!("Sending {num_erc20_transfers} ERC20 transfer transactions ...");
 
@@ -277,7 +351,7 @@ impl GatlingShooter {
     async fn run_erc721<'a>(&mut self) -> Result<Vec<FieldElement>> {
         let environment = self.environment()?;
 
-        let num_erc721_mints = 1000;
+        let num_erc721_mints = self.config.run.num_erc721_mints;
 
         info!("Sending {num_erc721_mints} ERC721 mint transactions ...");
 

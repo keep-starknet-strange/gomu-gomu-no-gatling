@@ -12,8 +12,10 @@ use starknet::core::types::FieldElement;
 pub struct GatlingConfig {
     /// The RPC configuration.
     pub rpc: RpcConfig,
-    /// The simulation configuration.
+    /// The setup phase configuration.
     pub setup: SetupConfig,
+    /// The run phase configuration.
+    pub run: RunConfig,
     /// The fee paying account
     pub deployer: DeployerConfig,
 }
@@ -42,10 +44,17 @@ pub struct SetupConfig {
 }
 
 #[derive(Debug, Deserialize, Default, Clone)]
-#[allow(unused)]
+// #[allow(unused)]
 pub struct DeployerConfig {
     pub address: FieldElement,
     pub signing_key: FieldElement,
+}
+
+#[derive(Debug, Deserialize, Default, Clone)]
+pub struct RunConfig {
+    pub num_erc20_transfers: u64,
+    pub num_erc721_mints: u64,
+    pub metrics_for_last_blocks: u64,
 }
 
 impl GatlingConfig {
