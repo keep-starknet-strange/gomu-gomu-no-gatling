@@ -46,6 +46,7 @@ pub struct SetupConfig {
 #[derive(Debug, Deserialize, Default, Clone)]
 // #[allow(unused)]
 pub struct DeployerConfig {
+    pub salt: FieldElement,
     pub address: FieldElement,
     pub signing_key: FieldElement,
 }

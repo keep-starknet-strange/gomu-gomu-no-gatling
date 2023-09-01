@@ -13,8 +13,8 @@ use crate::metrics::compute_all_metrics;
 use rand::seq::SliceRandom;
 
 use starknet::accounts::{
-    Account, AccountError, AccountFactory, Call, ConnectedAccount, OpenZeppelinAccountFactory,
-    SingleOwnerAccount,
+    Account, AccountError, AccountFactory, AccountFactoryError, Call, ConnectedAccount,
+    OpenZeppelinAccountFactory, SingleOwnerAccount,
 };
 use starknet::contract::ContractFactory;
 use starknet::core::chain_id;
@@ -248,7 +248,6 @@ impl GatlingShooter {
                 .collect(),
         );
 
-
         let num_erc20_blocks = erc20_end_block - erc20_start_block - 1;
         if metrics_for_last_blocks > num_erc20_blocks {
             warn!("Calculating ERC20 transfer metrics for the last {} blocks while only {} blocks have transactions, you should either use a lower number of blocks for the metrics or more transactions", metrics_for_last_blocks, num_erc20_blocks)
@@ -281,7 +280,6 @@ impl GatlingShooter {
                 .map(|(metric, value)| (metric.name.clone(), value.to_string()))
                 .collect(),
         );
-
 
         let num_erc721_blocks = erc721_end_block - erc721_start_block - 1;
         if metrics_for_last_blocks > num_erc721_blocks {
@@ -385,7 +383,7 @@ impl GatlingShooter {
             account_address, self.nonce
         );
 
-        let (amount_low, amount_high) = (felt!("0x1000000"), felt!("0x0"));
+        let (amount_low, amount_high) = (felt!("1"), felt!("0"));
 
         let call = Call {
             to: contract_address,
@@ -440,12 +438,26 @@ impl GatlingShooter {
     async fn deploy_erc721(&mut self, class_hash: FieldElement) -> Result<FieldElement> {
         let contract_factory = ContractFactory::new(class_hash, self.account.clone());
 
-        let salt = get_rng();
-
         let constructor_args = &[felt!("0xa1"), felt!("0xa2"), self.account.address()];
         let unique = false;
 
-        let deploy = contract_factory.deploy(constructor_args, salt, unique);
+        let address =
+            compute_contract_address(self.config.deployer.salt, class_hash, constructor_args);
+
+        if let Ok(contract_class_hash) = self
+            .starknet_rpc
+            .get_class_hash_at(BlockId::Tag(BlockTag::Pending), address)
+            .await
+        {
+            if contract_class_hash == class_hash {
+                warn!("ERC721 contract already deployed at address {address:#064x}");
+                return Ok(address);
+            } else {
+                return Err(eyre!("ERC721 contract {address:#064x} already deployed with a different class hash {contract_class_hash:#064x}, expected {class_hash:#064x}"));
+            }
+        }
+
+        let deploy = contract_factory.deploy(constructor_args, self.config.deployer.salt, unique);
 
         info!("Deploying ERC721 with nonce={}", self.nonce);
 
@@ -459,8 +471,6 @@ impl GatlingShooter {
             result.transaction_hash
         );
 
-        let address = compute_contract_address(salt, class_hash, constructor_args);
-
         info!("ERC721 contract deployed at address {:#064x}", address);
         Ok(address)
     }
@@ -468,12 +478,10 @@ impl GatlingShooter {
     async fn deploy_erc20(&mut self, class_hash: FieldElement) -> Result<FieldElement> {
         let contract_factory = ContractFactory::new(class_hash, self.account.clone());
 
-        let salt = get_rng();
-
-        let name = get_rng();
-        let symbol = get_rng();
+        let name = selector!("TestToken");
+        let symbol = selector!("TT");
         let decimals = felt!("128");
-        let (initial_supply_low, initial_supply_high) = (get_rng(), get_rng());
+        let (initial_supply_low, initial_supply_high) = (felt!("100000"), felt!("0"));
         let recipient = self.account.address();
 
         let constructor_args = &[
@@ -486,7 +494,23 @@ impl GatlingShooter {
         ];
         let unique = false;
 
-        let deploy = contract_factory.deploy(constructor_args, salt, unique);
+        let address =
+            compute_contract_address(self.config.deployer.salt, class_hash, constructor_args);
+
+        if let Ok(contract_class_hash) = self
+            .starknet_rpc
+            .get_class_hash_at(BlockId::Tag(BlockTag::Pending), address)
+            .await
+        {
+            if contract_class_hash == class_hash {
+                warn!("ERC20 contract already deployed at address {address:#064x}");
+                return Ok(address);
+            } else {
+                return Err(eyre!("ERC20 contract {address:#064x} already deployed with a different class hash {contract_class_hash:#064x}, expected {class_hash:#064x}"));
+            }
+        }
+
+        let deploy = contract_factory.deploy(constructor_args, self.config.deployer.salt, unique);
 
         info!("Deploying ERC20 contract with nonce={}", self.nonce);
 
@@ -499,8 +523,6 @@ impl GatlingShooter {
             "Deploy ERC20 transaction accepted {:#064x}",
             result.transaction_hash
         );
-
-        let address = compute_contract_address(salt, class_hash, constructor_args);
 
         info!("ERC20 contract deployed at address {:#064x}", address);
         Ok(address)
@@ -528,10 +550,26 @@ impl GatlingShooter {
             )
             .await?;
 
-            let salt = get_rng();
+            let salt = self.config.deployer.salt + FieldElement::from(i);
 
             let deploy = account_factory.deploy(salt);
             info!("Deploying account {i} with salt={}", salt,);
+
+            let address = deploy.address();
+
+            if let Ok(account_class_hash) = self
+                .starknet_rpc
+                .get_class_hash_at(BlockId::Tag(BlockTag::Pending), deploy.address())
+                .await
+            {
+                if account_class_hash == class_hash {
+                    warn!("Account {i} already deployed at address {address:#064x}");
+                    accounts.push(address);
+                    continue;
+                } else {
+                    return Err(eyre!("Account {i} already deployed at address {address:#064x} with a different class hash {account_class_hash:#064x}, expected {class_hash:#064x}"));
+                }
+            }
 
             let result = deploy.send().await?;
 
@@ -539,10 +577,12 @@ impl GatlingShooter {
 
             wait_for_tx(&self.starknet_rpc, result.transaction_hash).await?;
 
-            info!("Account {i} deployed at address {:#064x}", deploy.address());
+            info!("Account {i} deployed at address {address:#064x}");
 
-            self.transfer(self.config.setup.fee_token_address, deploy.address())
+            let tx_hash = self
+                .transfer(self.config.setup.fee_token_address, address)
                 .await?;
+            wait_for_tx(&self.starknet_rpc, tx_hash).await?;
         }
 
         Ok(accounts)
