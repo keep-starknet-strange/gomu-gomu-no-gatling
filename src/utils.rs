@@ -18,7 +18,6 @@ use std::time::Duration;
 use sysinfo::{CpuExt, System, SystemExt};
 
 /// Cairo string for "STARKNET_CONTRACT_ADDRESS"
-/// Used to calculate contract addresses
 const PREFIX_CONTRACT_ADDRESS: FieldElement = FieldElement::from_mont([
     3829237882463328880,
     17289941567720117366,
@@ -26,8 +25,7 @@ const PREFIX_CONTRACT_ADDRESS: FieldElement = FieldElement::from_mont([
     533439743893157637,
 ]);
 
-// 2 ** 251 - 256
-/// Used to calculate contract addresses
+/// 2 ** 251 - 256
 const ADDR_BOUND: FieldElement = FieldElement::from_mont([
     18446743986131443745,
     160989183,
@@ -35,7 +33,7 @@ const ADDR_BOUND: FieldElement = FieldElement::from_mont([
     576459263475590224,
 ]);
 
-/// Copied from starknet-rs since it's not public
+// Copied from starknet-rs since it's not public
 pub fn compute_contract_address(
     salt: FieldElement,
     class_hash: FieldElement,
@@ -122,7 +120,9 @@ pub async fn wait_for_tx(
                         return Ok(())
                     }
                     TransactionStatus::Rejected => {
-                        return Err(eyre!(format!("Transaction {tx_hash:#064x} has been rejected")));
+                        return Err(eyre!(format!(
+                            "Transaction {tx_hash:#064x} has been rejected"
+                        )));
                     }
                 }
             }

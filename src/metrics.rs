@@ -14,10 +14,7 @@ pub struct Metric {
 }
 
 fn average_tps(num_tx_per_block: &HashMap<u64, u64>) -> f64 {
-    num_tx_per_block
-        .values()
-        .map(|x| *x as f64 / BLOCK_TIME as f64)
-        .mean()
+    average_tbs(num_tx_per_block) / BLOCK_TIME as f64
 }
 
 fn average_tbs(num_tx_per_block: &HashMap<u64, u64>) -> f64 {
@@ -48,7 +45,7 @@ lazy_static! {
                 name: "Average Extrinsics per block".to_string(),
                 unit: "extrinsics/block".to_string(),
                 compute: average_tbs,
-            }
+            },
         ];
 
         metrics

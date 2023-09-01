@@ -1,15 +1,12 @@
 rpc:
   url: "http://localhost:9944"
 
-simulation:
-  fail_fast: true
-  setup:
-    erc20_contract_path: contracts/v0/ERC20.json
-    erc721_contract_path: contracts/v0/ERC721.json
-    account_contract_path: contracts/v0/OpenzeppelinAccount.json
-    fee_token_address: "0x049d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7"
-    num_accounts: 3
-
+setup:
+  erc20_contract_path: contracts/v0/ERC20.json
+  erc721_contract_path: contracts/v0/ERC721.json
+  account_contract_path: contracts/v0/OpenzeppelinAccount.json
+  fee_token_address: "0x049d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7"
+  num_accounts: 3
 
 deployer:
   address: "0x0000000000000000000000000000000000000000000000000000000000000002"

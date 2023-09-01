@@ -11,20 +11,20 @@ use starknet::core::types::FieldElement;
 #[derive(Debug, Deserialize, Default, Clone)]
 pub struct GatlingConfig {
     /// The RPC configuration.
-    pub rpc: Rpc,
+    pub rpc: RpcConfig,
     /// The simulation configuration.
-    pub simulation: Simulation,
+    pub setup: SetupConfig,
     /// The fee paying account
-    pub deployer: Deployer,
+    pub deployer: DeployerConfig,
 }
 
 #[derive(Debug, Deserialize, Clone)]
 #[allow(unused)]
-pub struct Rpc {
+pub struct RpcConfig {
     pub url: String,
 }
 
-impl Default for Rpc {
+impl Default for RpcConfig {
     fn default() -> Self {
         Self {
             url: "http://localhost:9944".to_string(),
@@ -33,14 +33,7 @@ impl Default for Rpc {
 }
 
 #[derive(Debug, Deserialize, Default, Clone)]
-#[allow(unused)]
-pub struct Simulation {
-    pub fail_fast: bool,
-    pub setup: Setup,
-}
-
-#[derive(Debug, Deserialize, Default, Clone)]
-pub struct Setup {
+pub struct SetupConfig {
     pub erc20_contract_path: PathBuf,
     pub erc721_contract_path: PathBuf,
     pub account_contract_path: PathBuf,
@@ -50,9 +43,9 @@ pub struct Setup {
 
 #[derive(Debug, Deserialize, Default, Clone)]
 #[allow(unused)]
-pub struct Deployer {
-    pub address: String,
-    pub signing_key: String,
+pub struct DeployerConfig {
+    pub address: FieldElement,
+    pub signing_key: FieldElement,
 }
 
 impl GatlingConfig {

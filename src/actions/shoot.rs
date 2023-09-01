@@ -72,17 +72,12 @@ impl GatlingShooter {
     pub async fn new(config: GatlingConfig) -> Result<Self> {
         let starknet_rpc = Arc::new(starknet_rpc_provider(Url::parse(&config.clone().rpc.url)?));
 
-        let signer = LocalWallet::from(SigningKey::from_secret_scalar(
-            FieldElement::from_hex_be(config.deployer.signing_key.as_str()).unwrap_or_default(),
-        ));
-
-        let address =
-            FieldElement::from_hex_be(config.deployer.address.as_str()).unwrap_or_default();
+        let signer = LocalWallet::from(SigningKey::from_secret_scalar(config.deployer.signing_key));
 
         let account = SingleOwnerAccount::new(
             starknet_rpc.clone(),
             signer.clone(),
-            address,
+            config.deployer.address,
             chain_id::TESTNET,
         );
 
@@ -131,7 +126,7 @@ impl GatlingShooter {
             block_number
         );
 
-        let setup_config = self.config.clone().simulation.setup;
+        let setup_config = self.config.clone().setup;
 
         let erc20_class_hash = self
             .declare_contract_legacy(&setup_config.erc20_contract_path)
@@ -256,7 +251,6 @@ impl GatlingShooter {
         let num_erc20_transfers = 1000;
 
         info!("Sending {num_erc20_transfers} ERC20 transfer transactions ...");
-        let _fail_fast = self.config.simulation.fail_fast;
 
         let start = SystemTime::now();
 
@@ -286,7 +280,6 @@ impl GatlingShooter {
         let num_erc721_mints = 1000;
 
         info!("Sending {num_erc721_mints} ERC721 mint transactions ...");
-        let _fail_fast = self.config.simulation.fail_fast;
 
         let start = SystemTime::now();
 
@@ -474,11 +467,8 @@ impl GatlingShooter {
 
             info!("Account {i} deployed at address {:#064x}", deploy.address());
 
-            self.transfer(
-                self.config.simulation.setup.fee_token_address,
-                deploy.address(),
-            )
-            .await?;
+            self.transfer(self.config.setup.fee_token_address, deploy.address())
+                .await?;
         }
 
         Ok(accounts)
