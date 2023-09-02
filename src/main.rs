@@ -1,5 +1,3 @@
-mod metrics;
-
 #[macro_use]
 extern crate log;
 use clap::Parser;
@@ -36,8 +34,8 @@ async fn main() -> Result<()> {
     // Execute the command.
     match cli.command {
         Command::Shoot { .. } => {
-            let simulation_report = shoot(cfg).await?;
-            info!("simulation completed: {:?}", simulation_report);
+            let gatling_report = shoot(cfg).await?;
+            info!("Gatling completed: {:#?}", gatling_report);
         }
     }
     Ok(())

@@ -11,7 +11,10 @@ setup:
 run:
   num_erc20_transfers: 1200
   num_erc721_mints: 1200
-  metrics_for_last_blocks: 5
+
+report:
+  num_blocks: 4
+  reports_dir: "reports"
 
 deployer:
   salt: 1

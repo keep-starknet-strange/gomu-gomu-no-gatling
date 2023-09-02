@@ -16,6 +16,8 @@ pub struct GatlingConfig {
     pub setup: SetupConfig,
     /// The run phase configuration.
     pub run: RunConfig,
+    /// Reporting configuration.
+    pub report: ReportConfig,
     /// The fee paying account
     pub deployer: DeployerConfig,
 }
@@ -55,7 +57,12 @@ pub struct DeployerConfig {
 pub struct RunConfig {
     pub num_erc20_transfers: u64,
     pub num_erc721_mints: u64,
-    pub metrics_for_last_blocks: u64,
+}
+
+#[derive(Debug, Deserialize, Default, Clone)]
+pub struct ReportConfig {
+    pub num_blocks: u64,
+    pub reports_dir: PathBuf,
 }
 
 impl GatlingConfig {

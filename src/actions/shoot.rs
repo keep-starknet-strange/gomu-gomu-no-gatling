@@ -1,20 +1,19 @@
 use crate::config::GatlingConfig;
 use crate::generators::get_rng;
-use crate::utils::{compute_contract_address, get_sysinfo, pretty_print_hashmap, wait_for_tx};
-use color_eyre::{eyre::eyre, Result};
+use crate::utils::{compute_contract_address, sanitize_filename, wait_for_tx, SYSINFO};
+use color_eyre::{eyre::eyre, Report, Result};
 
 use log::{debug, info, warn};
 
-use std::collections::HashMap;
 use std::path::Path;
 
-use crate::metrics::compute_all_metrics;
+use crate::metrics::BenchmarkReport;
 
 use rand::seq::SliceRandom;
 
 use starknet::accounts::{
-    Account, AccountError, AccountFactory, AccountFactoryError, Call, ConnectedAccount,
-    OpenZeppelinAccountFactory, SingleOwnerAccount,
+    Account, AccountError, AccountFactory, Call, ConnectedAccount, OpenZeppelinAccountFactory,
+    SingleOwnerAccount,
 };
 use starknet::contract::ContractFactory;
 use starknet::core::chain_id;
@@ -36,20 +35,20 @@ use url::Url;
 pub static MAX_FEE: FieldElement = felt!("0xfffffffffff");
 
 /// Shoot the load test simulation.
-pub async fn shoot(config: GatlingConfig) -> Result<SimulationReport> {
-    info!("starting simulation with config: {:?}", config);
+pub async fn shoot(config: GatlingConfig) -> Result<GatlingReport> {
+    info!("starting simulation with config: {:#?}", config);
     let mut shooter = GatlingShooter::from_config(config).await?;
-    let mut simulation_report = Default::default();
+    let mut gatling_report = Default::default();
     // Trigger the setup phase.
-    shooter.setup(&mut simulation_report).await?;
+    shooter.setup(&mut gatling_report).await?;
 
-    // Run the simulation.
-    shooter.run(&mut simulation_report).await?;
+    // Run the benchmarks.
+    shooter.run(&mut gatling_report).await;
 
     // Trigger the teardown phase.
-    shooter.teardown(&mut simulation_report).await?;
+    shooter.teardown(&mut gatling_report).await?;
 
-    Ok(simulation_report.clone())
+    Ok(gatling_report.clone())
 }
 
 pub struct GatlingShooter {
@@ -117,7 +116,7 @@ impl GatlingShooter {
     }
 
     /// Setup the simulation.
-    async fn setup<'a>(&mut self, _simulation_report: &'a mut SimulationReport) -> Result<()> {
+    async fn setup<'a>(&mut self, _gatling_report: &'a mut GatlingReport) -> Result<()> {
         let chain_id = self.starknet_rpc.chain_id().await?.to_bytes_be();
         let block_number = self.starknet_rpc.block_number().await?;
         info!(
@@ -162,163 +161,209 @@ impl GatlingShooter {
     }
 
     /// Teardown the simulation.
-    async fn teardown<'a>(&mut self, simulation_report: &'a mut SimulationReport) -> Result<()> {
+    async fn teardown<'a>(&mut self, gatling_report: &'a mut GatlingReport) -> Result<()> {
         info!("Tearing down!");
-        info!("=> System <=");
-        pretty_print_hashmap(&get_sysinfo());
+        info!("{}", *SYSINFO);
 
-        for (name, report) in &simulation_report.reports {
-            info!("=> Metrics for {name} <=");
-            pretty_print_hashmap(report);
+        info!("Writing reports to `{}` directory", self.config.report.reports_dir.display());
+        for report in &gatling_report.benchmark_reports {
+            let report_path = self
+                .config
+                .report
+                .reports_dir
+                .join(sanitize_filename(&report.name))
+                .with_extension("json");
+
+            std::fs::create_dir_all(&self.config.report.reports_dir)?;
+            let writer = std::fs::File::create(report_path)?;
+            serde_json::to_writer(writer, report)?;
         }
 
         Ok(())
     }
 
-    async fn check_transactions(&self, transactions: Vec<FieldElement>) {
+    async fn check_transactions(
+        &self,
+        transactions: Vec<FieldElement>,
+    ) -> (Vec<FieldElement>, Vec<Report>) {
         info!("Checking transactions ...");
         let now = SystemTime::now();
+
+        let total_txs = transactions.len();
+
+        let mut accepted_txs = Vec::new();
+        let mut errors = Vec::new();
+
         for transaction in transactions {
-            wait_for_tx(&self.starknet_rpc, transaction).await.unwrap();
-            debug!("Transaction {:#064x} accepted", transaction)
+            match wait_for_tx(&self.starknet_rpc, transaction).await {
+                Ok(_) => {
+                    accepted_txs.push(transaction);
+                    debug!("Transaction {:#064x} accepted", transaction)
+                }
+                Err(e) => {
+                    errors.push(e);
+                    debug!("Transaction {:#064x} rejected", transaction)
+                }
+            }
         }
         info!(
             "Took {} seconds to check transactions",
             now.elapsed().unwrap().as_secs_f32()
         );
-    }
 
-    /// Get a Map of the number of transactions per block from `start_block` to
-    /// `end_block` (including both)
-    /// This is meant to be used to calculate multiple metrics such as TPS and TPB
-    /// without hitting the StarkNet RPC multiple times
-    // TODO: add a cache to avoid hitting the RPC too many times
-    async fn get_num_tx_per_block(
-        &self,
-        start_block: u64,
-        end_block: u64,
-    ) -> Result<HashMap<u64, u64>> {
-        let mut map = HashMap::new();
+        let accepted_ratio = accepted_txs.len() as f64 / total_txs as f64 * 100.0;
+        let rejected_ratio = errors.len() as f64 / total_txs as f64 * 100.0;
 
-        for block_number in start_block..end_block {
-            let n = self
-                .starknet_rpc
-                .get_block_transaction_count(BlockId::Number(block_number))
-                .await?;
+        info!(
+            "{} transactions accepted ({:.2}%)",
+            accepted_txs.len(),
+            accepted_ratio,
+        );
+        info!(
+            "{} transactions rejected ({:.2}%)",
+            errors.len(),
+            rejected_ratio
+        );
 
-            map.insert(block_number, n);
-        }
-
-        Ok(map)
+        (accepted_txs, errors)
     }
 
     /// Run the benchmarks.
-    async fn run<'a>(&mut self, simulation_report: &'a mut SimulationReport) -> Result<()> {
+    async fn run<'a>(&mut self, gatling_report: &'a mut GatlingReport) {
         info!("Firing !");
-        let metrics_for_last_blocks = self.config.run.metrics_for_last_blocks;
+        let num_blocks = self.config.report.num_blocks;
 
-        let start_block = self.starknet_rpc.block_number().await? + 1;
+        let start_block = self.starknet_rpc.block_number().await;
 
         // Run ERC20 transfer transactions
-        let erc20_start_block = start_block;
-        let transactions = self.run_erc20().await?;
+        let erc20_start_block = self.starknet_rpc.block_number().await;
+        let (transactions, _) = self.run_erc20().await;
         self.check_transactions(transactions).await;
-        let erc20_end_block = self.starknet_rpc.block_number().await?;
+        let erc20_end_block = self.starknet_rpc.block_number().await;
 
         // Run ERC721 mint transactions
-        let erc721_start_block = self.starknet_rpc.block_number().await? + 1;
-        let transactions = self.run_erc721().await?;
+        let erc721_start_block = self.starknet_rpc.block_number().await;
+
+        let (transactions, _) = self.run_erc721().await;
         self.check_transactions(transactions).await;
-        let erc721_end_block = self.starknet_rpc.block_number().await?;
+        let erc721_end_block = self.starknet_rpc.block_number().await;
 
-        let end_block = erc721_end_block;
+        let end_block = self.starknet_rpc.block_number().await;
 
-        // Skip the first and last blocks from the metrics to make sure all
-        // the blocks are full
-        let num_tx_per_block = self
-            .get_num_tx_per_block(erc20_start_block + 1, erc20_end_block - 1)
-            .await?;
-        let metrics = compute_all_metrics(num_tx_per_block);
+        if let Err(err) = erc20_start_block.as_ref().and(erc20_end_block.as_ref()) {
+            warn!("Skip creating ERC20 reports, failed to get current block number because of `{err}`");
+        } else {
+            // The transactions we sent will be incorporated in the next accepted block
+            let erc20_start_block = erc20_start_block.unwrap() + 1;
+            let erc20_end_block = erc20_end_block.unwrap();
 
-        simulation_report.reports.insert(
-            "erc20".to_string(),
-            metrics
-                .iter()
-                .map(|(metric, value)| (metric.name.clone(), value.to_string()))
-                .collect(),
-        );
+            let benchmark_name = "ERC20".to_string();
 
-        let num_erc20_blocks = erc20_end_block - erc20_start_block - 1;
-        if metrics_for_last_blocks > num_erc20_blocks {
-            warn!("Calculating ERC20 transfer metrics for the last {} blocks while only {} blocks have transactions, you should either use a lower number of blocks for the metrics or more transactions", metrics_for_last_blocks, num_erc20_blocks)
+            let benchmark_report = BenchmarkReport::from_block_range(
+                self.starknet_rpc.clone(),
+                benchmark_name.clone(),
+                erc20_start_block as u64,
+                erc20_end_block as u64,
+            )
+            .await;
+
+            match benchmark_report {
+                Ok(benchmark_report) => gatling_report.benchmark_reports.push(benchmark_report),
+                Err(err) => {
+                    warn!("Failed to create benchmark report `{benchmark_name}` with `{err}`")
+                }
+            }
+
+            let benchmark_name = format!("ERC20 for the last {num_blocks} blocks");
+
+            let benchmark_report = BenchmarkReport::from_last_x_blocks(
+                self.starknet_rpc.clone(),
+                benchmark_name.clone(),
+                erc20_start_block as u64,
+                erc20_end_block as u64,
+                num_blocks,
+            )
+            .await;
+
+            match benchmark_report {
+                Ok(benchmark_report) => gatling_report.benchmark_reports.push(benchmark_report),
+                Err(err) => {
+                    warn!("Failed to create benchmark report `{benchmark_name}` with `{err}`")
+                }
+            }
         }
 
-        let num_tx_per_block = self
-            .get_num_tx_per_block(erc20_end_block - num_erc20_blocks, erc20_end_block - 1)
-            .await?;
-        let metrics = compute_all_metrics(num_tx_per_block);
+        if let Err(err) = erc721_start_block.as_ref().and(erc721_end_block.as_ref()) {
+            warn!("Skip creating ERC721 reports, failed to get current block number because of `{err}`");
+        } else {
+            // The transactions we sent will be incorporated in the next accepted block
+            let erc721_start_block = erc721_start_block.unwrap() + 1;
+            let erc721_end_block = erc721_end_block.unwrap();
 
-        simulation_report.reports.insert(
-            "erc20_last_blocks".to_string(),
-            metrics
-                .iter()
-                .map(|(metric, value)| (metric.name.clone(), value.to_string()))
-                .collect(),
-        );
+            let benchmark_name = "ERC721".to_string();
 
-        // Skip the first and last blocks from the metrics to make sure all
-        // the blocks are full
-        let num_tx_per_block = self
-            .get_num_tx_per_block(erc721_start_block + 1, erc721_end_block - 1)
-            .await?;
-        let metrics = compute_all_metrics(num_tx_per_block);
+            let benchmark_report = BenchmarkReport::from_block_range(
+                self.starknet_rpc.clone(),
+                benchmark_name.clone(),
+                erc721_start_block as u64,
+                erc721_end_block as u64,
+            )
+            .await;
 
-        simulation_report.reports.insert(
-            "erc721".to_string(),
-            metrics
-                .iter()
-                .map(|(metric, value)| (metric.name.clone(), value.to_string()))
-                .collect(),
-        );
+            match benchmark_report {
+                Ok(benchmark_report) => gatling_report.benchmark_reports.push(benchmark_report),
+                Err(err) => {
+                    warn!("Failed to create benchmark report `{benchmark_name}` with `{err}`")
+                }
+            }
 
-        let num_erc721_blocks = erc721_end_block - erc721_start_block - 1;
-        if metrics_for_last_blocks > num_erc721_blocks {
-            warn!("Calculating ERC721 mint metrics for the last {} blocks while only {} blocks have transactions, you should either use a lower number of blocks for the metrics or more transactions", metrics_for_last_blocks, num_erc721_blocks)
+            let benchmark_name = format!("ERC721 for the last {num_blocks} blocks");
+
+            let benchmark_report = BenchmarkReport::from_last_x_blocks(
+                self.starknet_rpc.clone(),
+                benchmark_name.clone(),
+                erc721_start_block as u64,
+                erc721_end_block as u64,
+                num_blocks,
+            )
+            .await;
+
+            match benchmark_report {
+                Ok(benchmark_report) => gatling_report.benchmark_reports.push(benchmark_report),
+                Err(err) => {
+                    warn!("Failed to create benchmark report `{benchmark_name}` with `{err}`")
+                }
+            }
         }
 
-        let num_tx_per_block = self
-            .get_num_tx_per_block(erc721_end_block - num_erc721_blocks, erc721_end_block - 1)
-            .await?;
-        let metrics = compute_all_metrics(num_tx_per_block);
+        if let Err(err) = start_block.as_ref().and(end_block.as_ref()) {
+            warn!("Skip creating full session report, failed to get current block number because of `{err}`");
+        } else {
+            // The transactions we sent will be incorporated in the next accepted block
+            let start_block = start_block.unwrap() + 1;
+            let end_block = end_block.unwrap();
 
-        simulation_report.reports.insert(
-            "erc721_last_blocks".to_string(),
-            metrics
-                .iter()
-                .map(|(metric, value)| (metric.name.clone(), value.to_string()))
-                .collect(),
-        );
+            let benchmark_name = "Full Session Report".to_string();
 
-        // Skip the first and last blocks from the metrics to make sure all
-        // the blocks are full
-        let num_tx_per_block = self
-            .get_num_tx_per_block(start_block + 1, end_block - 1)
-            .await?;
-        let metrics = compute_all_metrics(num_tx_per_block);
+            let benchmark_report = BenchmarkReport::from_block_range(
+                self.starknet_rpc.clone(),
+                benchmark_name.clone(),
+                start_block as u64,
+                end_block as u64,
+            )
+            .await;
 
-        simulation_report.reports.insert(
-            "full".to_string(),
-            metrics
-                .iter()
-                .map(|(metric, value)| (metric.name.clone(), value.to_string()))
-                .collect(),
-        );
-
-        Ok(())
+            match benchmark_report {
+                Ok(benchmark_report) => gatling_report.benchmark_reports.push(benchmark_report),
+                Err(err) => {
+                    warn!("Failed to create benchmark report `{benchmark_name}` with `{err}`")
+                }
+            }
+        }
     }
 
-    async fn run_erc20(&mut self) -> Result<Vec<FieldElement>> {
-        let environment = self.environment()?;
+    async fn run_erc20(&mut self) -> (Vec<FieldElement>, Vec<Report>) {
+        let environment = self.environment().unwrap();
 
         let num_erc20_transfers = self.config.run.num_erc20_transfers;
 
@@ -326,13 +371,22 @@ impl GatlingShooter {
 
         let start = SystemTime::now();
 
-        let mut transactions = Vec::new();
+        let mut accepted_txs = Vec::new();
+        let mut errors = Vec::new();
 
         for _ in 0..num_erc20_transfers {
-            let transaction_hash = self
+            match self
                 .transfer(environment.erc20_address, self.get_random_account_address())
-                .await?;
-            transactions.push(transaction_hash);
+                .await
+            {
+                Ok(transaction_hash) => {
+                    accepted_txs.push(transaction_hash);
+                }
+                Err(e) => {
+                    let e = eyre!(e).wrap_err("Error while sending ERC20 transfer transaction");
+                    errors.push(e);
+                }
+            }
         }
 
         let took = start.elapsed().unwrap().as_secs_f32();
@@ -343,11 +397,25 @@ impl GatlingShooter {
             num_erc20_transfers as f32 / took
         );
 
-        Ok(transactions)
+        let accepted_ratio = accepted_txs.len() as f64 / num_erc20_transfers as f64 * 100.0;
+        let rejected_ratio = errors.len() as f64 / num_erc20_transfers as f64 * 100.0;
+
+        info!(
+            "{} transfer transactions sent successfully ({:.2}%)",
+            accepted_txs.len(),
+            accepted_ratio,
+        );
+        info!(
+            "{} transfer transactions failed ({:.2}%)",
+            errors.len(),
+            rejected_ratio
+        );
+
+        (accepted_txs, errors)
     }
 
-    async fn run_erc721<'a>(&mut self) -> Result<Vec<FieldElement>> {
-        let environment = self.environment()?;
+    async fn run_erc721<'a>(&mut self) -> (Vec<FieldElement>, Vec<Report>) {
+        let environment = self.environment().unwrap();
 
         let num_erc721_mints = self.config.run.num_erc721_mints;
 
@@ -355,11 +423,19 @@ impl GatlingShooter {
 
         let start = SystemTime::now();
 
-        let mut transactions = Vec::new();
+        let mut accepted_txs = Vec::new();
+        let mut errors = Vec::new();
 
         for _ in 0..num_erc721_mints {
-            let transaction_hash = self.mint(environment.erc721_address).await?;
-            transactions.push(transaction_hash);
+            match self.mint(environment.erc721_address).await {
+                Ok(transaction_hash) => {
+                    accepted_txs.push(transaction_hash);
+                }
+                Err(e) => {
+                    let e = eyre!(e).wrap_err("Error while sending ERC721 mint transaction");
+                    errors.push(e);
+                }
+            };
         }
 
         let took = start.elapsed().unwrap().as_secs_f32();
@@ -370,7 +446,21 @@ impl GatlingShooter {
             num_erc721_mints as f32 / took
         );
 
-        Ok(transactions)
+        let accepted_ratio = accepted_txs.len() as f64 / num_erc721_mints as f64 * 100.0;
+        let rejected_ratio = errors.len() as f64 / num_erc721_mints as f64 * 100.0;
+
+        info!(
+            "{} mint transactions sent successfully ({:.2}%)",
+            accepted_txs.len(),
+            accepted_ratio,
+        );
+        info!(
+            "{} mint transactions failed ({:.2}%)",
+            errors.len(),
+            rejected_ratio
+        );
+
+        (accepted_txs, errors)
     }
 
     async fn transfer(
@@ -605,6 +695,8 @@ impl GatlingShooter {
 
         self.account.set_block_id(BlockId::Tag(BlockTag::Pending));
 
+        // TODO: check if the class hash is already declared before attempting
+        // to declare it, this should be faster
         match self
             .account
             .declare_legacy(Arc::new(contract_artifact))
@@ -636,10 +728,8 @@ impl GatlingShooter {
 
 /// The simulation report.
 #[derive(Debug, Default, Clone)]
-pub struct SimulationReport {
-    pub chain_id: Option<FieldElement>,
-    pub block_number: Option<u64>,
-    pub reports: HashMap<String, HashMap<String, String>>,
+pub struct GatlingReport {
+    pub benchmark_reports: Vec<BenchmarkReport>,
 }
 
 /// Create a StarkNet RPC provider from a URL.

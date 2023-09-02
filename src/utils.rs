@@ -1,8 +1,12 @@
+use std::fmt;
+use std::sync::Arc;
 use std::{collections::HashMap, time::SystemTime};
 
 use color_eyre::{eyre::eyre, Result};
-use log::{debug, info};
-use starknet::core::types::{StarknetError, TransactionStatus};
+use lazy_static::lazy_static;
+use log::debug;
+use serde::Serialize;
+use starknet::core::types::{BlockId, StarknetError, TransactionStatus};
 use starknet::core::{crypto::compute_hash_on_elements, types::FieldElement};
 use starknet::providers::{jsonrpc::HttpTransport, JsonRpcClient, Provider};
 use starknet::providers::{MaybeUnknownErrorCode, ProviderError};
@@ -16,6 +20,10 @@ use starknet::{
 
 use std::time::Duration;
 use sysinfo::{CpuExt, System, SystemExt};
+
+lazy_static! {
+    pub static ref SYSINFO: SysInfo = SysInfo::new();
+}
 
 /// Cairo string for "STARKNET_CONTRACT_ADDRESS"
 const PREFIX_CONTRACT_ADDRESS: FieldElement = FieldElement::from_mont([
@@ -48,40 +56,57 @@ pub fn compute_contract_address(
     ]) % ADDR_BOUND
 }
 
-pub fn get_sysinfo() -> HashMap<String, String> {
-    let sys = System::new_all();
-    let cpu = sys.global_cpu_info();
-
-    let mut sysinfo = HashMap::new();
-
-    let system = format!(
-        "{} Kernel Version {}",
-        sys.long_os_version().unwrap().trim(),
-        sys.kernel_version().unwrap()
-    );
-    sysinfo.insert("System".to_string(), system);
-
-    let cpu = format!(
-        "{} {:.2}GHz {} cores",
-        cpu.brand(),
-        cpu.frequency() as f32 / 1000.0,
-        sys.cpus().len()
-    );
-    sysinfo.insert("CPU".to_string(), cpu);
-
-    let memory = format!("{} GB", sys.total_memory() / 1024 / 1024 / 1024);
-    sysinfo.insert("Memory".to_string(), memory);
-
-    sysinfo.insert("Arch".to_string(), std::env::consts::ARCH.to_string());
-
-    sysinfo
+#[derive(Debug, Clone)]
+pub struct SysInfo {
+    pub os_name: String,
+    pub kernel_version: String,
+    pub arch: String,
+    pub cpu_count: usize,
+    pub cpu_frequency: u64,
+    pub cpu_brand: String,
+    pub memory: u64,
 }
 
-pub fn pretty_print_hashmap(map: &HashMap<String, String>) {
-    let key_max_length = map.keys().map(|key| key.len()).max().unwrap();
+impl SysInfo {
+    pub fn new() -> Self {
+        let sys = System::new_all();
+        let cpu = sys.global_cpu_info();
 
-    for (name, value) in map {
-        info!("{:key_max_length$} : {}", name, value);
+        Self {
+            os_name: sys.long_os_version().unwrap().trim().to_string(),
+            kernel_version: sys.kernel_version().unwrap(),
+            arch: std::env::consts::ARCH.to_string(),
+            cpu_count: sys.cpus().len(),
+            cpu_frequency: cpu.frequency(),
+            cpu_brand: cpu.brand().to_string(),
+            memory: sys.total_memory(),
+        }
+    }
+}
+
+impl fmt::Display for SysInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(
+            f,
+            "System Information:\nSystem : {} Kernel Version {}\nArch   : {}\nCPU    : {} {:.2}GHz {} cores\nMemory : {} GB",
+            self.os_name,
+            self.kernel_version,
+            self.arch,
+            self.cpu_brand,
+            format!("{:.2} GHz", self.cpu_frequency as f64 / 1000.0),
+            self.cpu_count,
+            self.memory / (1024 * 1024 * 1024)
+        )
+    }
+}
+
+impl Serialize for SysInfo {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let sysinfo_string = format!("CPU Count: {}\nCPU Model: {}\nCPU Speed (MHz): {}\nTotal Memory: {} GB\nPlatform: {}\nRelease: {}\nArchitecture: {}", self.cpu_count, self.cpu_frequency, self.cpu_brand, self.memory, self.os_name, self.kernel_version, self.arch);
+        serializer.serialize_str(&sysinfo_string)
     }
 }
 
@@ -137,7 +162,6 @@ pub async fn wait_for_tx(
                 debug!("Waiting for transaction {tx_hash:#064x} to show up");
                 tokio::time::sleep(WAIT_FOR_TX_SLEEP).await;
             }
-            // TODO: use wrap_err
             Err(err) => {
                 return Err(eyre!(err).wrap_err(format!(
                     "Error while waiting for transaction {tx_hash:#064x}"
@@ -145,4 +169,56 @@ pub async fn wait_for_tx(
             }
         }
     }
+}
+
+/// Get a Map of the number of transactions per block from `start_block` to
+/// `end_block` (including both)
+/// This is meant to be used to calculate multiple metrics such as TPS and TPB
+/// without hitting the StarkNet RPC multiple times
+// TODO: add a cache to avoid hitting the RPC for the same block
+pub async fn get_num_tx_per_block(
+    starknet_rpc: Arc<JsonRpcClient<HttpTransport>>,
+    start_block: u64,
+    end_block: u64,
+) -> Result<HashMap<u64, u64>> {
+    let mut map = HashMap::new();
+
+    for block_number in start_block..=end_block {
+        let n = starknet_rpc
+            .get_block_transaction_count(BlockId::Number(block_number))
+            .await?;
+
+        map.insert(block_number, n);
+    }
+
+    Ok(map)
+}
+
+/// Sanitize a string to be used as a filename by removing/replacing illegal chars
+pub fn sanitize_filename(input: &str) -> String {
+    // Define a set of characters to replace or remove
+    let invalid_chars: &[char] = &['/', '\\', ':', '*', '?', '"', '<', '>', '|', ' '];
+
+    // Replace invalid characters with underscores and remove control characters
+    let sanitized = input
+        .to_lowercase()
+        .chars()
+        .map(|c| {
+            if invalid_chars.contains(&c) || c.is_control() {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect::<String>();
+
+    // Truncate the string to a reasonable length for file names
+    let max_length = 255; // Maximum file name length for many file systems
+    let truncated = if sanitized.len() > max_length {
+        &sanitized[..max_length]
+    } else {
+        &sanitized
+    };
+
+    truncated.to_string()
 }
