@@ -2,7 +2,7 @@ use crate::utils::{get_num_tx_per_block, SYSINFO};
 
 use color_eyre::Result;
 
-use log::{info, warn};
+use log::{warn};
 use serde::{ser::SerializeSeq, Serialize};
 use serde_json::json;
 use starknet::providers::{jsonrpc::HttpTransport, JsonRpcClient};

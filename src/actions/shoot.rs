@@ -82,7 +82,6 @@ impl GatlingShooter {
 
         let nonce = account.get_nonce().await?;
 
-        // TODO: Do we need signer and starknet_rpc, they are already part of account?
         Ok(Self {
             config,
             starknet_rpc,
@@ -100,7 +99,7 @@ impl GatlingShooter {
     }
 
     /// Return a random account address from the ones deployed during the setup phase
-    /// Or the deployer account address if no accounts were deployed or
+    /// or the deployer account address if no accounts were deployed or
     /// if the environment is not yet populated
     pub fn get_random_account_address(&self) -> FieldElement {
         match self.environment() {
@@ -165,7 +164,10 @@ impl GatlingShooter {
         info!("Tearing down!");
         info!("{}", *SYSINFO);
 
-        info!("Writing reports to `{}` directory", self.config.report.reports_dir.display());
+        info!(
+            "Writing reports to `{}` directory",
+            self.config.report.reports_dir.display()
+        );
         for report in &gatling_report.benchmark_reports {
             let report_path = self
                 .config
@@ -262,8 +264,8 @@ impl GatlingShooter {
             let benchmark_report = BenchmarkReport::from_block_range(
                 self.starknet_rpc.clone(),
                 benchmark_name.clone(),
-                erc20_start_block as u64,
-                erc20_end_block as u64,
+                erc20_start_block,
+                erc20_end_block,
             )
             .await;
 
@@ -279,8 +281,8 @@ impl GatlingShooter {
             let benchmark_report = BenchmarkReport::from_last_x_blocks(
                 self.starknet_rpc.clone(),
                 benchmark_name.clone(),
-                erc20_start_block as u64,
-                erc20_end_block as u64,
+                erc20_start_block,
+                erc20_end_block,
                 num_blocks,
             )
             .await;
@@ -305,8 +307,8 @@ impl GatlingShooter {
             let benchmark_report = BenchmarkReport::from_block_range(
                 self.starknet_rpc.clone(),
                 benchmark_name.clone(),
-                erc721_start_block as u64,
-                erc721_end_block as u64,
+                erc721_start_block,
+                erc721_end_block,
             )
             .await;
 
@@ -322,8 +324,8 @@ impl GatlingShooter {
             let benchmark_report = BenchmarkReport::from_last_x_blocks(
                 self.starknet_rpc.clone(),
                 benchmark_name.clone(),
-                erc721_start_block as u64,
-                erc721_end_block as u64,
+                erc721_start_block,
+                erc721_end_block,
                 num_blocks,
             )
             .await;
@@ -348,8 +350,8 @@ impl GatlingShooter {
             let benchmark_report = BenchmarkReport::from_block_range(
                 self.starknet_rpc.clone(),
                 benchmark_name.clone(),
-                start_block as u64,
-                end_block as u64,
+                start_block,
+                end_block,
             )
             .await;
 
@@ -489,7 +491,7 @@ impl GatlingShooter {
             .send()
             .await?;
 
-        self.nonce = self.nonce + felt!("1");
+        self.nonce += felt!("1");
 
         Ok(result.transaction_hash)
     }
@@ -520,7 +522,7 @@ impl GatlingShooter {
             .send()
             .await?;
 
-        self.nonce = self.nonce + felt!("1");
+        self.nonce += felt!("1");
 
         Ok(result.transaction_hash)
     }
@@ -554,7 +556,7 @@ impl GatlingShooter {
         let result = deploy.nonce(self.nonce).max_fee(MAX_FEE).send().await?;
         wait_for_tx(&self.starknet_rpc, result.transaction_hash).await?;
 
-        self.nonce = self.nonce + felt!("1");
+        self.nonce += felt!("1");
 
         debug!(
             "Deploy ERC721 transaction accepted {:#064x}",
@@ -607,7 +609,7 @@ impl GatlingShooter {
         let result = deploy.nonce(self.nonce).max_fee(MAX_FEE).send().await?;
         wait_for_tx(&self.starknet_rpc, result.transaction_hash).await?;
 
-        self.nonce = self.nonce + felt!("1");
+        self.nonce += felt!("1");
 
         debug!(
             "Deploy ERC20 transaction accepted {:#064x}",
@@ -626,12 +628,12 @@ impl GatlingShooter {
     ) -> Result<Vec<FieldElement>> {
         info!("Creating {} accounts", num_accounts);
 
-        let mut accounts = Vec::with_capacity(num_accounts);
+        let mut deployed_accounts = Vec::with_capacity(num_accounts);
 
         for i in 0..num_accounts {
             self.account.set_block_id(BlockId::Tag(BlockTag::Pending));
 
-            // TODO: Check if OpenZepplinAccountFactory could be used with other type of accounts ? Or should we require users to use OpenZepplinAccountFactory ?
+            // TODO: Check if OpenZepplinAccountFactory could be used with other type of accounts ? or should we require users to use OpenZepplinAccountFactory ?
             let account_factory = OpenZeppelinAccountFactory::new(
                 class_hash,
                 chain_id::TESTNET,
@@ -654,7 +656,7 @@ impl GatlingShooter {
             {
                 if account_class_hash == class_hash {
                     warn!("Account {i} already deployed at address {address:#064x}");
-                    accounts.push(address);
+                    deployed_accounts.push(address);
                     continue;
                 } else {
                     return Err(eyre!("Account {i} already deployed at address {address:#064x} with a different class hash {account_class_hash:#064x}, expected {class_hash:#064x}"));
@@ -663,7 +665,7 @@ impl GatlingShooter {
 
             let result = deploy.send().await?;
 
-            accounts.push(result.contract_address);
+            deployed_accounts.push(result.contract_address);
 
             wait_for_tx(&self.starknet_rpc, result.transaction_hash).await?;
 
@@ -675,7 +677,7 @@ impl GatlingShooter {
             wait_for_tx(&self.starknet_rpc, tx_hash).await?;
         }
 
-        Ok(accounts)
+        Ok(deployed_accounts)
     }
 
     async fn declare_contract_legacy<'a>(
@@ -690,7 +692,6 @@ impl GatlingShooter {
 
         let contract_artifact: LegacyContractClass = serde_json::from_reader(file)?;
 
-        // TODO: get the class_hash from the already declared error
         let class_hash = contract_artifact.class_hash()?;
 
         self.account.set_block_id(BlockId::Tag(BlockTag::Pending));
@@ -716,6 +717,7 @@ impl GatlingShooter {
                     ..
                 },
             ))) => {
+                // TODO: get the class_hash from the already declared error
                 warn!("Contract already declared class_hash={:#064x}", class_hash);
                 Ok(class_hash)
             }
