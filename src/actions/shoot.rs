@@ -1,7 +1,7 @@
 use crate::config::GatlingConfig;
 use crate::generators::get_rng;
 use crate::utils::{compute_contract_address, sanitize_filename, wait_for_tx, SYSINFO};
-use color_eyre::{eyre::eyre, Report, Result};
+use color_eyre::{eyre::eyre, Report as EyreReport, Result};
 
 use log::{debug, info, warn};
 
@@ -48,7 +48,7 @@ pub async fn shoot(config: GatlingConfig) -> Result<GatlingReport> {
     // Trigger the teardown phase.
     shooter.teardown(&mut gatling_report).await?;
 
-    Ok(gatling_report.clone())
+    Ok(gatling_report)
 }
 
 pub struct GatlingShooter {
@@ -187,7 +187,7 @@ impl GatlingShooter {
     async fn check_transactions(
         &self,
         transactions: Vec<FieldElement>,
-    ) -> (Vec<FieldElement>, Vec<Report>) {
+    ) -> (Vec<FieldElement>, Vec<EyreReport>) {
         info!("Checking transactions ...");
         let now = SystemTime::now();
 
@@ -364,7 +364,7 @@ impl GatlingShooter {
         }
     }
 
-    async fn run_erc20(&mut self) -> (Vec<FieldElement>, Vec<Report>) {
+    async fn run_erc20(&mut self) -> (Vec<FieldElement>, Vec<EyreReport>) {
         let environment = self.environment().unwrap();
 
         let num_erc20_transfers = self.config.run.num_erc20_transfers;
@@ -416,7 +416,7 @@ impl GatlingShooter {
         (accepted_txs, errors)
     }
 
-    async fn run_erc721<'a>(&mut self) -> (Vec<FieldElement>, Vec<Report>) {
+    async fn run_erc721<'a>(&mut self) -> (Vec<FieldElement>, Vec<EyreReport>) {
         let environment = self.environment().unwrap();
 
         let num_erc721_mints = self.config.run.num_erc721_mints;

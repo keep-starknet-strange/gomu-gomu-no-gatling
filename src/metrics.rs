@@ -2,12 +2,12 @@ use crate::utils::{get_num_tx_per_block, SYSINFO};
 
 use color_eyre::Result;
 
-use log::{warn};
+use log::warn;
 use serde::{ser::SerializeSeq, Serialize};
 use serde_json::json;
 use starknet::providers::{jsonrpc::HttpTransport, JsonRpcClient};
 use statrs::statistics::Statistics;
-use std::{collections::HashMap, fmt, sync::Arc};
+use std::{fmt, sync::Arc};
 
 use lazy_static::lazy_static;
 
@@ -15,14 +15,18 @@ pub static BLOCK_TIME: u64 = 6;
 
 /// Metric struct that contains the name, unit and compute function for a metric
 /// A Metric is a measure of a specific performance aspect of a benchmark through
-/// the compute function which receives a hashmap of block number to number of transactions
+/// the compute function which receives a vector of number of transactions per block
 /// and returns the metric value as a f64
-/// The name and unit are used for displaying the metric, Example: "Average TPS: 1000 transactions/second"
+/// The name and unit are used for displaying the metric
+///
+/// ### Example
+/// { name: "Average TPS", unit: "transactions/second", compute: average_tps }
+/// "Average TPS: 1000 transactions/second"
 #[derive(PartialEq, Eq, Hash, Clone)]
 pub struct Metric {
     pub name: String,
     pub unit: String,
-    pub compute: fn(&HashMap<u64, u64>) -> f64,
+    pub compute: fn(&Vec<u64>) -> f64,
 }
 
 /// A struct that contains the result of a metric computation alognside the name and unit
@@ -140,15 +144,15 @@ impl Serialize for BenchmarkReport {
     }
 }
 
-fn average_tps(num_tx_per_block: &HashMap<u64, u64>) -> f64 {
+fn average_tps(num_tx_per_block: &Vec<u64>) -> f64 {
     average_tpb(num_tx_per_block) / BLOCK_TIME as f64
 }
 
-fn average_tpb(num_tx_per_block: &HashMap<u64, u64>) -> f64 {
-    num_tx_per_block.values().map(|x| *x as f64).mean()
+fn average_tpb(num_tx_per_block: &Vec<u64>) -> f64 {
+    num_tx_per_block.iter().map(|x| *x as f64).mean()
 }
 
-pub fn compute_all_metrics(num_tx_per_block: HashMap<u64, u64>) -> Vec<MetricResult> {
+pub fn compute_all_metrics(num_tx_per_block: Vec<u64>) -> Vec<MetricResult> {
     METRICS
         .iter()
         .map(|metric| {

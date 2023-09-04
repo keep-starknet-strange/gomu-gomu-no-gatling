@@ -1,6 +1,6 @@
 use std::fmt;
 use std::sync::Arc;
-use std::{collections::HashMap, time::SystemTime};
+use std::time::SystemTime;
 
 use color_eyre::{eyre::eyre, Result};
 use lazy_static::lazy_static;
@@ -180,18 +180,18 @@ pub async fn get_num_tx_per_block(
     starknet_rpc: Arc<JsonRpcClient<HttpTransport>>,
     start_block: u64,
     end_block: u64,
-) -> Result<HashMap<u64, u64>> {
-    let mut map = HashMap::new();
+) -> Result<Vec<u64>> {
+    let mut num_tx_per_block = Vec::new();
 
     for block_number in start_block..=end_block {
         let n = starknet_rpc
             .get_block_transaction_count(BlockId::Number(block_number))
             .await?;
 
-        map.insert(block_number, n);
+        num_tx_per_block.push(n);
     }
 
-    Ok(map)
+    Ok(num_tx_per_block)
 }
 
 /// Sanitize a string to be used as a filename by removing/replacing illegal chars
