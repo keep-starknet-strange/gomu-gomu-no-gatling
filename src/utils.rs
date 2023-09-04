@@ -5,7 +5,7 @@ use std::time::SystemTime;
 use color_eyre::{eyre::eyre, Result};
 use lazy_static::lazy_static;
 use log::debug;
-use serde::Serialize;
+
 use starknet::core::types::{BlockId, StarknetError, TransactionStatus};
 use starknet::core::{crypto::compute_hash_on_elements, types::FieldElement};
 use starknet::providers::{jsonrpc::HttpTransport, JsonRpcClient, Provider};
@@ -97,16 +97,6 @@ impl fmt::Display for SysInfo {
             self.cpu_count,
             self.memory / (1024 * 1024 * 1024)
         )
-    }
-}
-
-impl Serialize for SysInfo {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let sysinfo_string = format!("CPU Count: {}\nCPU Model: {}\nCPU Speed (MHz): {}\nTotal Memory: {} GB\nPlatform: {}\nRelease: {}\nArchitecture: {}", self.cpu_count, self.cpu_frequency, self.cpu_brand, self.memory, self.os_name, self.kernel_version, self.arch);
-        serializer.serialize_str(&sysinfo_string)
     }
 }
 

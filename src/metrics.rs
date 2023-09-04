@@ -3,8 +3,7 @@ use crate::utils::{get_num_tx_per_block, SYSINFO};
 use color_eyre::Result;
 
 use log::warn;
-use serde::{ser::SerializeSeq, Serialize};
-use serde_json::json;
+use serde::{ser::SerializeStruct, Serialize};
 use starknet::providers::{jsonrpc::HttpTransport, JsonRpcClient};
 use statrs::statistics::Statistics;
 use std::{fmt, sync::Arc};
@@ -45,8 +44,10 @@ pub struct MetricResult {
 /// of all the metrics that were computed for the benchmark
 /// A benchmark report can be created from a block range or from the last x blocks
 /// It implements the Serialize trait so it can be serialized to json
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
+#[serde(transparent)]
 pub struct BenchmarkReport {
+    #[serde(skip)]
     pub name: String,
     pub metrics: Vec<MetricResult>,
 }
@@ -122,25 +123,36 @@ impl fmt::Display for BenchmarkReport {
     }
 }
 
-impl Serialize for BenchmarkReport {
+impl Serialize for MetricResult {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
-        let mut seq = serializer.serialize_seq(Some(self.metrics.len()))?;
+        let mut s = serializer.serialize_struct("metric", 4)?;
 
-        for metric in &self.metrics {
-            let element = json!({
-                "name": metric.name,
-                "unit": metric.unit,
-                "value": metric.value,
-                "extra": *SYSINFO,
-            });
+        let sysinfo_string = format!(
+            "CPU Count: {}\n\
+            CPU Model: {}\n\
+            CPU Speed (MHz): {}\n\
+            Total Memory: {} GB\n\
+            Platform: {}\n\
+            Release: {}\n\
+            Architecture: {}",
+            SYSINFO.cpu_count,
+            SYSINFO.cpu_frequency,
+            SYSINFO.cpu_brand,
+            SYSINFO.memory / (1024 * 1024 * 1024),
+            SYSINFO.os_name,
+            SYSINFO.kernel_version,
+            SYSINFO.arch
+        );
 
-            seq.serialize_element(&element)?;
-        }
+        s.serialize_field("name", &self.name)?;
+        s.serialize_field("unit", &self.unit)?;
+        s.serialize_field("value", &self.value)?;
+        s.serialize_field("extra", &sysinfo_string)?;
 
-        seq.end()
+        s.end()
     }
 }
 
