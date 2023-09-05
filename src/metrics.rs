@@ -9,8 +9,6 @@ use starknet::providers::{jsonrpc::HttpTransport, JsonRpcClient};
 use statrs::statistics::Statistics;
 use std::{fmt, sync::Arc};
 
-
-
 pub const BLOCK_TIME: u64 = 6;
 
 /// Metric struct that contains the name, unit and compute function for a metric
@@ -23,9 +21,9 @@ pub const BLOCK_TIME: u64 = 6;
 /// { name: "Average TPS", unit: "transactions/second", compute: average_tps }
 /// "Average TPS: 1000 transactions/second"
 #[derive(PartialEq, Eq, Hash, Clone)]
-pub struct Metric<'a> {
-    pub name: &'a str,
-    pub unit: &'a str,
+pub struct Metric {
+    pub name: &'static str,
+    pub unit: &'static str,
     pub compute: fn(&Vec<u64>) -> f64,
 }
 
@@ -35,9 +33,9 @@ pub struct Metric<'a> {
 /// MetricResult { name: "Average TPS", unit: "transactions/second", value: 1000 }
 /// "Average TPS: 1000 transactions/second"
 #[derive(Debug, Clone)]
-pub struct MetricResult<'a> {
-    pub name: &'a str,
-    pub unit: &'a str,
+pub struct MetricResult {
+    pub name: &'static str,
+    pub unit: &'static str,
     pub value: f64,
 }
 
@@ -46,18 +44,18 @@ pub struct MetricResult<'a> {
 /// A benchmark report can be created from a block range or from the last x blocks
 /// It implements the Serialize trait so it can be serialized to json
 #[derive(Debug, Clone)]
-pub struct BenchmarkReport<'a> {
+pub struct BenchmarkReport {
     pub name: String,
-    pub metrics: Vec<MetricResult<'a>>,
+    pub metrics: Vec<MetricResult>,
 }
 
-impl BenchmarkReport<'_> {
+impl BenchmarkReport {
     pub async fn from_block_range<'a>(
         starknet_rpc: Arc<JsonRpcClient<HttpTransport>>,
         name: String,
         start_block: u64,
         end_block: u64,
-    ) -> Result<BenchmarkReport<'a>> {
+    ) -> Result<BenchmarkReport> {
         let mut start_block = start_block;
         let mut end_block = end_block;
 
@@ -80,7 +78,7 @@ impl BenchmarkReport<'_> {
         first_block: u64,
         last_block: u64,
         num_last_blocks: u64,
-    ) -> Result<BenchmarkReport<'a>> {
+    ) -> Result<BenchmarkReport> {
         let mut start_block = last_block - num_last_blocks + 1;
         let mut end_block = last_block;
 
@@ -138,13 +136,13 @@ impl BenchmarkReport<'_> {
     }
 }
 
-impl fmt::Display for MetricResult<'_> {
+impl fmt::Display for MetricResult {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}: {} {}", self.name, self.value, self.unit)
     }
 }
 
-impl fmt::Display for BenchmarkReport<'_> {
+impl fmt::Display for BenchmarkReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "Benchmark Report: {}", self.name)?;
 
@@ -164,7 +162,7 @@ fn average_tpb(num_tx_per_block: &Vec<u64>) -> f64 {
     num_tx_per_block.iter().map(|x| *x as f64).mean()
 }
 
-pub fn compute_all_metrics<'a>(num_tx_per_block: Vec<u64>) -> Vec<MetricResult<'a>> {
+pub fn compute_all_metrics<'a>(num_tx_per_block: Vec<u64>) -> Vec<MetricResult> {
     METRICS
         .iter()
         .map(|metric| {
