@@ -1,27 +1,34 @@
 //! General configuration
 
+use std::path::PathBuf;
+
 use color_eyre::eyre::Result;
 use config::{builder::DefaultState, Config, ConfigBuilder, File};
 use serde_derive::Deserialize;
+use starknet::core::types::FieldElement;
 
 /// Configuration for the application.
 #[derive(Debug, Deserialize, Default, Clone)]
 pub struct GatlingConfig {
     /// The RPC configuration.
-    pub rpc: Option<Rpc>,
-    /// The simulation configuration.
-    pub simulation: Option<Simulation>,
+    pub rpc: RpcConfig,
+    /// The setup phase configuration.
+    pub setup: SetupConfig,
+    /// The run phase configuration.
+    pub run: RunConfig,
+    /// Reporting configuration.
+    pub report: ReportConfig,
     /// The fee paying account
-    pub deployer: Option<Deployer>,
+    pub deployer: DeployerConfig,
 }
 
 #[derive(Debug, Deserialize, Clone)]
 #[allow(unused)]
-pub struct Rpc {
+pub struct RpcConfig {
     pub url: String,
 }
 
-impl Default for Rpc {
+impl Default for RpcConfig {
     fn default() -> Self {
         Self {
             url: "http://localhost:9944".to_string(),
@@ -30,28 +37,32 @@ impl Default for Rpc {
 }
 
 #[derive(Debug, Deserialize, Default, Clone)]
-#[allow(unused)]
-pub struct Simulation {
-    pub fail_fast: bool,
-    pub setup: Option<Setup>,
+pub struct SetupConfig {
+    pub erc20_contract_path: PathBuf,
+    pub erc721_contract_path: PathBuf,
+    pub account_contract_path: PathBuf,
+    pub fee_token_address: FieldElement,
+    pub num_accounts: usize,
 }
 
 #[derive(Debug, Deserialize, Default, Clone)]
-pub struct Setup {
-    pub create_accounts: Option<CreateAccounts>,
+// #[allow(unused)]
+pub struct DeployerConfig {
+    pub salt: FieldElement,
+    pub address: FieldElement,
+    pub signing_key: FieldElement,
 }
 
 #[derive(Debug, Deserialize, Default, Clone)]
-pub struct CreateAccounts {
-    pub num_accounts: u32,
+pub struct RunConfig {
+    pub num_erc20_transfers: u64,
+    pub num_erc721_mints: u64,
 }
 
 #[derive(Debug, Deserialize, Default, Clone)]
-#[allow(unused)]
-pub struct Deployer {
-    pub address: String,
-    pub signing_key: String,
-    pub salt: u32,
+pub struct ReportConfig {
+    pub num_blocks: u64,
+    pub reports_dir: PathBuf,
 }
 
 impl GatlingConfig {
