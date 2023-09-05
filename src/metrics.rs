@@ -3,14 +3,15 @@ use crate::utils::{get_num_tx_per_block, SYSINFO};
 use color_eyre::Result;
 
 use log::warn;
-use serde::{ser::SerializeStruct, Serialize};
+
+use serde_json::{json, Value};
 use starknet::providers::{jsonrpc::HttpTransport, JsonRpcClient};
 use statrs::statistics::Statistics;
 use std::{fmt, sync::Arc};
 
-use lazy_static::lazy_static;
 
-pub static BLOCK_TIME: u64 = 6;
+
+pub const BLOCK_TIME: u64 = 6;
 
 /// Metric struct that contains the name, unit and compute function for a metric
 /// A Metric is a measure of a specific performance aspect of a benchmark through
@@ -22,9 +23,9 @@ pub static BLOCK_TIME: u64 = 6;
 /// { name: "Average TPS", unit: "transactions/second", compute: average_tps }
 /// "Average TPS: 1000 transactions/second"
 #[derive(PartialEq, Eq, Hash, Clone)]
-pub struct Metric {
-    pub name: String,
-    pub unit: String,
+pub struct Metric<'a> {
+    pub name: &'a str,
+    pub unit: &'a str,
     pub compute: fn(&Vec<u64>) -> f64,
 }
 
@@ -34,9 +35,9 @@ pub struct Metric {
 /// MetricResult { name: "Average TPS", unit: "transactions/second", value: 1000 }
 /// "Average TPS: 1000 transactions/second"
 #[derive(Debug, Clone)]
-pub struct MetricResult {
-    pub name: String,
-    pub unit: String,
+pub struct MetricResult<'a> {
+    pub name: &'a str,
+    pub unit: &'a str,
     pub value: f64,
 }
 
@@ -44,21 +45,19 @@ pub struct MetricResult {
 /// of all the metrics that were computed for the benchmark
 /// A benchmark report can be created from a block range or from the last x blocks
 /// It implements the Serialize trait so it can be serialized to json
-#[derive(Debug, Clone, Serialize)]
-#[serde(transparent)]
-pub struct BenchmarkReport {
-    #[serde(skip)]
+#[derive(Debug, Clone)]
+pub struct BenchmarkReport<'a> {
     pub name: String,
-    pub metrics: Vec<MetricResult>,
+    pub metrics: Vec<MetricResult<'a>>,
 }
 
-impl BenchmarkReport {
-    pub async fn from_block_range(
+impl BenchmarkReport<'_> {
+    pub async fn from_block_range<'a>(
         starknet_rpc: Arc<JsonRpcClient<HttpTransport>>,
         name: String,
         start_block: u64,
         end_block: u64,
-    ) -> Result<Self> {
+    ) -> Result<BenchmarkReport<'a>> {
         let mut start_block = start_block;
         let mut end_block = end_block;
 
@@ -72,16 +71,16 @@ impl BenchmarkReport {
         let num_tx_per_block = get_num_tx_per_block(starknet_rpc, start_block, end_block).await?;
         let metrics = compute_all_metrics(num_tx_per_block);
 
-        Ok(Self { name, metrics })
+        Ok(BenchmarkReport { name, metrics })
     }
 
-    pub async fn from_last_x_blocks(
+    pub async fn from_last_x_blocks<'a>(
         starknet_rpc: Arc<JsonRpcClient<HttpTransport>>,
         name: String,
         first_block: u64,
         last_block: u64,
         num_last_blocks: u64,
-    ) -> Result<Self> {
+    ) -> Result<BenchmarkReport<'a>> {
         let mut start_block = last_block - num_last_blocks + 1;
         let mut end_block = last_block;
 
@@ -101,35 +100,10 @@ impl BenchmarkReport {
         let num_tx_per_block = get_num_tx_per_block(starknet_rpc, start_block, end_block).await?;
         let metrics = compute_all_metrics(num_tx_per_block);
 
-        Ok(Self { name, metrics })
+        Ok(BenchmarkReport { name, metrics })
     }
-}
 
-impl fmt::Display for MetricResult {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {} {}", self.name, self.value, self.unit)
-    }
-}
-
-impl fmt::Display for BenchmarkReport {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "Benchmark Report: {}", self.name)?;
-
-        for metric in &self.metrics {
-            writeln!(f, "{}", metric)?;
-        }
-
-        Ok(())
-    }
-}
-
-impl Serialize for MetricResult {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let mut s = serializer.serialize_struct("metric", 4)?;
-
+    pub fn to_json(&self) -> Result<Value> {
         let sysinfo_string = format!(
             "CPU Count: {}\n\
             CPU Model: {}\n\
@@ -147,12 +121,38 @@ impl Serialize for MetricResult {
             SYSINFO.arch
         );
 
-        s.serialize_field("name", &self.name)?;
-        s.serialize_field("unit", &self.unit)?;
-        s.serialize_field("value", &self.value)?;
-        s.serialize_field("extra", &sysinfo_string)?;
+        let mut report = vec![];
 
-        s.end()
+        for metric in self.metrics.iter() {
+            report.push(json!({
+                "name": metric.name,
+                "unit": metric.unit,
+                "value": metric.value,
+                "extra": sysinfo_string
+            }));
+        }
+
+        let report_json = serde_json::to_value(report)?;
+
+        Ok(report_json)
+    }
+}
+
+impl fmt::Display for MetricResult<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: {} {}", self.name, self.value, self.unit)
+    }
+}
+
+impl fmt::Display for BenchmarkReport<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "Benchmark Report: {}", self.name)?;
+
+        for metric in &self.metrics {
+            writeln!(f, "{}", metric)?;
+        }
+
+        Ok(())
     }
 }
 
@@ -164,31 +164,29 @@ fn average_tpb(num_tx_per_block: &Vec<u64>) -> f64 {
     num_tx_per_block.iter().map(|x| *x as f64).mean()
 }
 
-pub fn compute_all_metrics(num_tx_per_block: Vec<u64>) -> Vec<MetricResult> {
+pub fn compute_all_metrics<'a>(num_tx_per_block: Vec<u64>) -> Vec<MetricResult<'a>> {
     METRICS
         .iter()
         .map(|metric| {
             let value = (metric.compute)(&num_tx_per_block);
             MetricResult {
-                name: metric.name.clone(),
-                unit: metric.unit.clone(),
+                name: metric.name,
+                unit: metric.unit,
                 value,
             }
         })
         .collect()
 }
 
-lazy_static! {
-    pub static ref METRICS: Vec<Metric> = vec![
-        Metric {
-            name: "Average TPS".to_string(),
-            unit: "transactions/second".to_string(),
-            compute: average_tps,
-        },
-        Metric {
-            name: "Average Extrinsics per block".to_string(),
-            unit: "extrinsics/block".to_string(),
-            compute: average_tpb,
-        },
-    ];
-}
+pub const METRICS: [Metric; 2] = [
+    Metric {
+        name: "Average TPS",
+        unit: "transactions/second",
+        compute: average_tps,
+    },
+    Metric {
+        name: "Average Extrinsics per block",
+        unit: "extrinsics/block",
+        compute: average_tpb,
+    },
+];

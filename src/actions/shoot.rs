@@ -35,7 +35,7 @@ use url::Url;
 pub static MAX_FEE: FieldElement = felt!("0xfffffffffff");
 
 /// Shoot the load test simulation.
-pub async fn shoot(config: GatlingConfig) -> Result<GatlingReport> {
+pub async fn shoot<'a>(config: GatlingConfig) -> Result<GatlingReport<'a>> {
     info!("starting simulation with config: {:#?}", config);
     let mut shooter = GatlingShooter::from_config(config).await?;
     let mut gatling_report = Default::default();
@@ -115,7 +115,7 @@ impl GatlingShooter {
     }
 
     /// Setup the simulation.
-    async fn setup<'a>(&mut self, _gatling_report: &'a mut GatlingReport) -> Result<()> {
+    async fn setup<'a>(&mut self, _gatling_report: &mut GatlingReport<'a>) -> Result<()> {
         let chain_id = self.starknet_rpc.chain_id().await?.to_bytes_be();
         let block_number = self.starknet_rpc.block_number().await?;
         info!(
@@ -160,7 +160,7 @@ impl GatlingShooter {
     }
 
     /// Teardown the simulation.
-    async fn teardown<'a>(&mut self, gatling_report: &'a mut GatlingReport) -> Result<()> {
+    async fn teardown<'a>(&mut self, gatling_report: &mut GatlingReport<'a>) -> Result<()> {
         info!("Tearing down!");
         info!("{}", *SYSINFO);
 
@@ -178,7 +178,7 @@ impl GatlingShooter {
 
             std::fs::create_dir_all(&self.config.report.reports_dir)?;
             let writer = std::fs::File::create(report_path)?;
-            serde_json::to_writer(writer, report)?;
+            serde_json::to_writer(writer, &report.to_json()?)?;
         }
 
         Ok(())
@@ -231,7 +231,7 @@ impl GatlingShooter {
     }
 
     /// Run the benchmarks.
-    async fn run<'a>(&mut self, gatling_report: &'a mut GatlingReport) {
+    async fn run<'a>(&mut self, gatling_report: &mut GatlingReport<'a>) {
         info!("Firing !");
         let num_blocks = self.config.report.num_blocks;
 
@@ -730,8 +730,8 @@ impl GatlingShooter {
 
 /// The simulation report.
 #[derive(Debug, Default, Clone)]
-pub struct GatlingReport {
-    pub benchmark_reports: Vec<BenchmarkReport>,
+pub struct GatlingReport<'a> {
+    pub benchmark_reports: Vec<BenchmarkReport<'a>>,
 }
 
 /// Create a StarkNet RPC provider from a URL.
