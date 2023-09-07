@@ -1,9 +1,10 @@
-use crate::config::GatlingConfig;
+use crate::config::{ContractSourceConfig, GatlingConfig};
 use crate::generators::get_rng;
 use crate::utils::{compute_contract_address, sanitize_filename, wait_for_tx, SYSINFO};
 use color_eyre::{eyre::eyre, Report as EyreReport, Result};
 
 use log::{debug, info, warn};
+use starknet::core::types::contract::SierraClass;
 
 use std::path::Path;
 
@@ -127,15 +128,15 @@ impl GatlingShooter {
         let setup_config = self.config.clone().setup;
 
         let erc20_class_hash = self
-            .declare_contract_legacy(&setup_config.erc20_contract_path)
+            .declare_contract(&setup_config.erc20_contract)
             .await?;
 
         let erc721_class_hash = self
-            .declare_contract_legacy(&setup_config.erc721_contract_path)
+            .declare_contract(&setup_config.erc721_contract)
             .await?;
 
         let account_class_hash = self
-            .declare_contract_legacy(&setup_config.account_contract_path)
+            .declare_contract(&setup_config.account_contract)
             .await?;
 
         let accounts = if setup_config.num_accounts > 0 {
@@ -680,6 +681,23 @@ impl GatlingShooter {
         Ok(deployed_accounts)
     }
 
+    async fn check_already_declared(&self, class_hash: FieldElement) -> Result<bool> {
+        match self
+            .starknet_rpc
+            .get_class(BlockId::Tag(BlockTag::Pending), class_hash)
+            .await
+        {
+            Ok(_) => {
+                warn!("Contract already declared at {class_hash:#064x}");
+                return Ok(true);
+            }
+            Err(ProviderError::StarknetError(StarknetErrorWithMessage {
+                code: MaybeUnknownErrorCode::Known(StarknetError::ClassHashNotFound),
+                ..
+            })) => Ok(false),
+            Err(err) => Err(eyre!(err)),
+        }
+    }
     async fn declare_contract_legacy<'a>(
         &mut self,
         contract_path: impl AsRef<Path>,
@@ -689,15 +707,15 @@ impl GatlingShooter {
             contract_path.as_ref().display()
         );
         let file = std::fs::File::open(contract_path)?;
-
         let contract_artifact: LegacyContractClass = serde_json::from_reader(file)?;
-
         let class_hash = contract_artifact.class_hash()?;
+
+        if self.check_already_declared(class_hash).await? {
+            return Ok(class_hash);
+        }
 
         self.account.set_block_id(BlockId::Tag(BlockTag::Pending));
 
-        // TODO: check if the class hash is already declared before attempting
-        // to declare it, this should be faster
         match self
             .account
             .declare_legacy(Arc::new(contract_artifact))
@@ -706,23 +724,72 @@ impl GatlingShooter {
         {
             Ok(tx_resp) => {
                 info!(
-                    "Contract declared successfully class_hash={:#064x}",
+                    "Contract declared successfully at {:#064x}",
                     tx_resp.class_hash
                 );
                 Ok(tx_resp.class_hash)
             }
-            Err(AccountError::Provider(ProviderError::StarknetError(
-                StarknetErrorWithMessage {
-                    code: MaybeUnknownErrorCode::Known(StarknetError::ClassAlreadyDeclared),
-                    ..
-                },
-            ))) => {
-                // TODO: get the class_hash from the already declared error
-                warn!("Contract already declared class_hash={:#064x}", class_hash);
-                Ok(class_hash)
+            Err(e) => {
+                // TODO: why panic here ?
+                panic!("Could not declare contract: {e}");
+            }
+        }
+    }
+
+    async fn declare_contract_v1<'a>(
+        &mut self,
+        contract_path: impl AsRef<Path>,
+        casm_class_hash: FieldElement,
+    ) -> Result<FieldElement> {
+        // Sierra class artifact. Output of the `starknet-compile` command
+        info!(
+            "Declaring contract from path {}",
+            contract_path.as_ref().display()
+        );
+        let file = std::fs::File::open(contract_path)?;
+        let contract_artifact: SierraClass = serde_json::from_reader(file)?;
+        let class_hash = contract_artifact.class_hash()?;
+
+        if self.check_already_declared(class_hash).await? {
+            return Ok(class_hash);
+        }
+
+        // `SingleOwnerAccount` defaults to checking nonce and estimating fees against the latest
+        // block. Optionally change the target block to pending with the following line:
+        self.account.set_block_id(BlockId::Tag(BlockTag::Pending));
+
+        // We need to flatten the ABI into a string first
+        let flattened_class = contract_artifact.flatten().unwrap();
+
+        match self
+            .account
+            .declare(Arc::new(flattened_class), casm_class_hash)
+            .send()
+            .await
+        {
+            Ok(tx_resp) => {
+                info!(
+                    "Contract declared successfully at {:#064x}",
+                    tx_resp.class_hash
+                );
+                Ok(tx_resp.class_hash)
             }
             Err(e) => {
+                // TODO: why panic here ?
                 panic!("Could not declare contract: {e}");
+            }
+        }
+    }
+
+    async fn declare_contract(
+        &mut self,
+        erc20_contract_path: &crate::config::ContractSourceConfig,
+    ) -> Result<FieldElement> {
+        match erc20_contract_path {
+            ContractSourceConfig::V0(path) => self.declare_contract_legacy(&path).await,
+            ContractSourceConfig::V1(config) => {
+                self.declare_contract_v1(&config.path, config.get_casm_hash()?)
+                    .await
             }
         }
     }

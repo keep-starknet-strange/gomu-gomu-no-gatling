@@ -2,9 +2,15 @@ rpc:
   url: "http://localhost:9944"
 
 setup:
-  erc20_contract_path: contracts/v0/ERC20.json
-  erc721_contract_path: contracts/v0/ERC721.json
-  account_contract_path: contracts/v0/OpenzeppelinAccount.json
+  erc20_contract_path:
+    v0: contracts/v0/ERC20.json
+
+  erc721_contract:
+    v0: contracts/v0/ERC721.json
+
+  account_contract:
+    v0: contracts/v0/OpenzeppelinAccount.json
+
   fee_token_address: "0x049d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7"
   num_accounts: 3
 
