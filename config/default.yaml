@@ -2,7 +2,7 @@ rpc:
   url: "http://localhost:9944"
 
 setup:
-  erc20_contract_path:
+  erc20_contract:
     v0: contracts/v0/ERC20.json
 
   erc721_contract:

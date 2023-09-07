@@ -13,8 +13,8 @@ use crate::metrics::BenchmarkReport;
 use rand::seq::SliceRandom;
 
 use starknet::accounts::{
-    Account, AccountError, AccountFactory, Call, ConnectedAccount, OpenZeppelinAccountFactory,
-    SingleOwnerAccount,
+    Account, AccountFactory, Call, ConnectedAccount, OpenZeppelinAccountFactory,
+    SingleOwnerAccount, ExecutionEncoding,
 };
 use starknet::contract::ContractFactory;
 use starknet::core::chain_id;
@@ -79,6 +79,8 @@ impl GatlingShooter {
             signer.clone(),
             config.deployer.address,
             chain_id::TESTNET,
+            // TODO: How should we decide what to use here ?
+            ExecutionEncoding::Legacy,
         );
 
         let nonce = account.get_nonce().await?;
@@ -531,11 +533,11 @@ impl GatlingShooter {
     async fn deploy_erc721(&mut self, class_hash: FieldElement) -> Result<FieldElement> {
         let contract_factory = ContractFactory::new(class_hash, self.account.clone());
 
-        let constructor_args = &[felt!("0xa1"), felt!("0xa2"), self.account.address()];
+        let constructor_args = vec![felt!("0xa1"), felt!("0xa2"), self.account.address()];
         let unique = false;
 
         let address =
-            compute_contract_address(self.config.deployer.salt, class_hash, constructor_args);
+            compute_contract_address(self.config.deployer.salt, class_hash, &constructor_args);
 
         if let Ok(contract_class_hash) = self
             .starknet_rpc
@@ -577,7 +579,7 @@ impl GatlingShooter {
         let (initial_supply_low, initial_supply_high) = (felt!("100000"), felt!("0"));
         let recipient = self.account.address();
 
-        let constructor_args = &[
+        let constructor_args = vec![
             name,
             symbol,
             decimals,
@@ -588,7 +590,7 @@ impl GatlingShooter {
         let unique = false;
 
         let address =
-            compute_contract_address(self.config.deployer.salt, class_hash, constructor_args);
+            compute_contract_address(self.config.deployer.salt, class_hash, &constructor_args);
 
         if let Ok(contract_class_hash) = self
             .starknet_rpc

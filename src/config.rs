@@ -4,8 +4,9 @@ use std::path::PathBuf;
 
 use color_eyre::eyre::Result;
 use config::{builder::DefaultState, Config, ConfigBuilder, File};
+
 use serde_derive::Deserialize;
-use starknet::core::types::{contract::CompiledClass, FieldElement};
+use starknet::{core::types::{contract::{CompiledClass}, FieldElement}};
 
 /// Configuration for the application.
 #[derive(Debug, Deserialize, Clone)]
