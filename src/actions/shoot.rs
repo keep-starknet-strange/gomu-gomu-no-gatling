@@ -13,8 +13,8 @@ use crate::metrics::BenchmarkReport;
 use rand::seq::SliceRandom;
 
 use starknet::accounts::{
-    Account, AccountFactory, Call, ConnectedAccount, OpenZeppelinAccountFactory,
-    SingleOwnerAccount, ExecutionEncoding,
+    Account, AccountFactory, Call, ConnectedAccount, ExecutionEncoding, OpenZeppelinAccountFactory,
+    SingleOwnerAccount,
 };
 use starknet::contract::ContractFactory;
 use starknet::core::chain_id;
@@ -129,13 +129,9 @@ impl GatlingShooter {
 
         let setup_config = self.config.clone().setup;
 
-        let erc20_class_hash = self
-            .declare_contract(&setup_config.erc20_contract)
-            .await?;
+        let erc20_class_hash = self.declare_contract(&setup_config.erc20_contract).await?;
 
-        let erc721_class_hash = self
-            .declare_contract(&setup_config.erc721_contract)
-            .await?;
+        let erc721_class_hash = self.declare_contract(&setup_config.erc721_contract).await?;
 
         let account_class_hash = self
             .declare_contract(&setup_config.account_contract)
@@ -381,7 +377,11 @@ impl GatlingShooter {
 
         for _ in 0..num_erc20_transfers {
             match self
-                .transfer(environment.erc20_address, self.get_random_account_address())
+                .transfer(
+                    environment.erc20_address,
+                    self.get_random_account_address(),
+                    felt!("1"),
+                )
                 .await
             {
                 Ok(transaction_hash) => {
@@ -472,13 +472,14 @@ impl GatlingShooter {
         &mut self,
         contract_address: FieldElement,
         account_address: FieldElement,
+        amount: FieldElement,
     ) -> Result<FieldElement> {
         debug!(
-            "Transferring to address={:#064x} with nonce={}",
-            account_address, self.nonce
+            "Transferring {amount} of {contract_address:#064x} to address {account_address:#064x} with nonce={}",
+            self.nonce
         );
 
-        let (amount_low, amount_high) = (felt!("1"), felt!("0"));
+        let (amount_low, amount_high) = (amount, felt!("0"));
 
         let call = Call {
             to: contract_address,
@@ -533,7 +534,11 @@ impl GatlingShooter {
     async fn deploy_erc721(&mut self, class_hash: FieldElement) -> Result<FieldElement> {
         let contract_factory = ContractFactory::new(class_hash, self.account.clone());
 
-        let constructor_args = vec![felt!("0xa1"), felt!("0xa2"), self.account.address()];
+        let name = selector!("TestNFT");
+        let symbol = selector!("TNFT");
+        let recipient = self.account.address();
+
+        let constructor_args = vec![name, symbol, recipient];
         let unique = false;
 
         let address =
@@ -554,7 +559,10 @@ impl GatlingShooter {
 
         let deploy = contract_factory.deploy(constructor_args, self.config.deployer.salt, unique);
 
-        info!("Deploying ERC721 with nonce={}", self.nonce);
+        info!(
+            "Deploying ERC721 with nonce={}, address={address}",
+            self.nonce
+        );
 
         let result = deploy.nonce(self.nonce).max_fee(MAX_FEE).send().await?;
         wait_for_tx(&self.starknet_rpc, result.transaction_hash).await?;
@@ -607,7 +615,10 @@ impl GatlingShooter {
 
         let deploy = contract_factory.deploy(constructor_args, self.config.deployer.salt, unique);
 
-        info!("Deploying ERC20 contract with nonce={}", self.nonce);
+        info!(
+            "Deploying ERC20 contract with nonce={}, address={address}",
+            self.nonce
+        );
 
         let result = deploy.nonce(self.nonce).max_fee(MAX_FEE).send().await?;
         wait_for_tx(&self.starknet_rpc, result.transaction_hash).await?;
@@ -636,25 +647,24 @@ impl GatlingShooter {
         for i in 0..num_accounts {
             self.account.set_block_id(BlockId::Tag(BlockTag::Pending));
 
+            let fee_token_address = self.config.setup.fee_token_address;
+
             // TODO: Check if OpenZepplinAccountFactory could be used with other type of accounts ? or should we require users to use OpenZepplinAccountFactory ?
-            let account_factory = OpenZeppelinAccountFactory::new(
-                class_hash,
-                chain_id::TESTNET,
-                &self.signer,
-                &self.starknet_rpc,
-            )
-            .await?;
+            let signer = self.signer.clone();
+            let provider = self.starknet_rpc.clone();
+            let account_factory =
+                OpenZeppelinAccountFactory::new(class_hash, chain_id::TESTNET, &signer, &provider)
+                    .await?;
 
             let salt = self.config.deployer.salt + FieldElement::from(i);
 
-            let deploy = account_factory.deploy(salt);
-            info!("Deploying account {i} with salt={}", salt,);
-
+            let deploy = account_factory.deploy(salt).max_fee(MAX_FEE);
             let address = deploy.address();
+            info!("Deploying account {i} with salt {salt} at address {address:#064x}");
 
             if let Ok(account_class_hash) = self
                 .starknet_rpc
-                .get_class_hash_at(BlockId::Tag(BlockTag::Pending), deploy.address())
+                .get_class_hash_at(BlockId::Tag(BlockTag::Pending), address)
                 .await
             {
                 if account_class_hash == class_hash {
@@ -666,6 +676,16 @@ impl GatlingShooter {
                 }
             }
 
+            info!("Funding account {i} at address {address:#064x}");
+            let tx_hash = self
+                .transfer(
+                    fee_token_address,
+                    address,
+                    felt!("0xffffffffff"),
+                )
+                .await?;
+            wait_for_tx(&self.starknet_rpc, tx_hash).await?;
+
             let result = deploy.send().await?;
 
             deployed_accounts.push(result.contract_address);
@@ -673,11 +693,6 @@ impl GatlingShooter {
             wait_for_tx(&self.starknet_rpc, result.transaction_hash).await?;
 
             info!("Account {i} deployed at address {address:#064x}");
-
-            let tx_hash = self
-                .transfer(self.config.setup.fee_token_address, address)
-                .await?;
-            wait_for_tx(&self.starknet_rpc, tx_hash).await?;
         }
 
         Ok(deployed_accounts)
@@ -721,6 +736,8 @@ impl GatlingShooter {
         match self
             .account
             .declare_legacy(Arc::new(contract_artifact))
+            .max_fee(MAX_FEE)
+            .nonce(self.nonce)
             .send()
             .await
         {
@@ -729,6 +746,7 @@ impl GatlingShooter {
                     "Contract declared successfully at {:#064x}",
                     tx_resp.class_hash
                 );
+                self.nonce += felt!("1");
                 Ok(tx_resp.class_hash)
             }
             Err(e) => {
@@ -766,6 +784,8 @@ impl GatlingShooter {
         match self
             .account
             .declare(Arc::new(flattened_class), casm_class_hash)
+            .max_fee(MAX_FEE)
+            .nonce(self.nonce)
             .send()
             .await
         {
@@ -774,6 +794,7 @@ impl GatlingShooter {
                     "Contract declared successfully at {:#064x}",
                     tx_resp.class_hash
                 );
+                self.nonce += felt!("1");
                 Ok(tx_resp.class_hash)
             }
             Err(e) => {
@@ -785,9 +806,9 @@ impl GatlingShooter {
 
     async fn declare_contract(
         &mut self,
-        erc20_contract_path: &crate::config::ContractSourceConfig,
+        contract_source: &crate::config::ContractSourceConfig,
     ) -> Result<FieldElement> {
-        match erc20_contract_path {
+        match contract_source {
             ContractSourceConfig::V0(path) => self.declare_contract_legacy(&path).await,
             ContractSourceConfig::V1(config) => {
                 self.declare_contract_v1(&config.path, config.get_casm_hash()?)

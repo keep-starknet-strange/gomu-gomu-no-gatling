@@ -6,14 +6,12 @@ use color_eyre::{eyre::eyre, Result};
 use lazy_static::lazy_static;
 use log::debug;
 
-use starknet::core::types::{BlockId, StarknetError, ExecutionResult};
+use starknet::core::types::{BlockId, ExecutionResult, StarknetError};
 use starknet::core::{crypto::compute_hash_on_elements, types::FieldElement};
 use starknet::providers::{jsonrpc::HttpTransport, JsonRpcClient, Provider};
 use starknet::providers::{MaybeUnknownErrorCode, ProviderError};
 use starknet::{
-    core::types::{
-        MaybePendingTransactionReceipt::{PendingReceipt, Receipt},
-    },
+    core::types::MaybePendingTransactionReceipt::{PendingReceipt, Receipt},
     providers::StarknetErrorWithMessage,
 };
 
