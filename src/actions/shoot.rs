@@ -1,6 +1,7 @@
 use crate::config::{ContractSourceConfig, GatlingConfig};
 use crate::generators::get_rng;
 use crate::utils::{compute_contract_address, sanitize_filename, wait_for_tx, SYSINFO};
+use color_eyre::eyre::Context;
 use color_eyre::{eyre::eyre, Report as EyreReport, Result};
 
 use log::{debug, info, warn};
@@ -678,11 +679,7 @@ impl GatlingShooter {
 
             info!("Funding account {i} at address {address:#064x}");
             let tx_hash = self
-                .transfer(
-                    fee_token_address,
-                    address,
-                    felt!("0xffffffffff"),
-                )
+                .transfer(fee_token_address, address, felt!("0xffffffffff"))
                 .await?;
             wait_for_tx(&self.starknet_rpc, tx_hash).await?;
 
@@ -733,27 +730,21 @@ impl GatlingShooter {
 
         self.account.set_block_id(BlockId::Tag(BlockTag::Pending));
 
-        match self
+        let tx_resp = self
             .account
             .declare_legacy(Arc::new(contract_artifact))
             .max_fee(MAX_FEE)
             .nonce(self.nonce)
             .send()
             .await
-        {
-            Ok(tx_resp) => {
-                info!(
-                    "Contract declared successfully at {:#064x}",
-                    tx_resp.class_hash
-                );
-                self.nonce += felt!("1");
-                Ok(tx_resp.class_hash)
-            }
-            Err(e) => {
-                // TODO: why panic here ?
-                panic!("Could not declare contract: {e}");
-            }
-        }
+            .wrap_err("Could not declare contract")?;
+
+        info!(
+            "Contract declared successfully at {:#064x}",
+            tx_resp.class_hash
+        );
+        self.nonce += felt!("1");
+        Ok(tx_resp.class_hash)
     }
 
     async fn declare_contract_v1<'a>(
@@ -781,27 +772,21 @@ impl GatlingShooter {
         // We need to flatten the ABI into a string first
         let flattened_class = contract_artifact.flatten().unwrap();
 
-        match self
+        let tx_resp = self
             .account
             .declare(Arc::new(flattened_class), casm_class_hash)
             .max_fee(MAX_FEE)
             .nonce(self.nonce)
             .send()
             .await
-        {
-            Ok(tx_resp) => {
-                info!(
-                    "Contract declared successfully at {:#064x}",
-                    tx_resp.class_hash
-                );
-                self.nonce += felt!("1");
-                Ok(tx_resp.class_hash)
-            }
-            Err(e) => {
-                // TODO: why panic here ?
-                panic!("Could not declare contract: {e}");
-            }
-        }
+            .wrap_err("Could not declare contract")?;
+
+        info!(
+            "Contract declared successfully at {:#064x}",
+            tx_resp.class_hash
+        );
+        self.nonce += felt!("1");
+        Ok(tx_resp.class_hash)
     }
 
     async fn declare_contract(
