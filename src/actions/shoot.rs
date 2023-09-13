@@ -1,9 +1,11 @@
-use crate::config::GatlingConfig;
+use crate::config::{ContractSourceConfig, GatlingConfig};
 use crate::generators::get_rng;
 use crate::utils::{compute_contract_address, sanitize_filename, wait_for_tx, SYSINFO};
+use color_eyre::eyre::Context;
 use color_eyre::{eyre::eyre, Report as EyreReport, Result};
 
 use log::{debug, info, warn};
+use starknet::core::types::contract::SierraClass;
 
 use std::path::Path;
 
@@ -12,7 +14,7 @@ use crate::metrics::BenchmarkReport;
 use rand::seq::SliceRandom;
 
 use starknet::accounts::{
-    Account, AccountError, AccountFactory, Call, ConnectedAccount, OpenZeppelinAccountFactory,
+    Account, AccountFactory, Call, ConnectedAccount, ExecutionEncoding, OpenZeppelinAccountFactory,
     SingleOwnerAccount,
 };
 use starknet::contract::ContractFactory;
@@ -78,6 +80,9 @@ impl GatlingShooter {
             signer.clone(),
             config.deployer.address,
             chain_id::TESTNET,
+            // Legacy is for cairo0 contracts, New is for cairo1
+            // Passing Legacy since we're using the 0x2 account which is cairo0
+            ExecutionEncoding::Legacy,
         );
 
         let nonce = account.get_nonce().await?;
@@ -126,16 +131,12 @@ impl GatlingShooter {
 
         let setup_config = self.config.clone().setup;
 
-        let erc20_class_hash = self
-            .declare_contract_legacy(&setup_config.erc20_contract_path)
-            .await?;
+        let erc20_class_hash = self.declare_contract(&setup_config.erc20_contract).await?;
 
-        let erc721_class_hash = self
-            .declare_contract_legacy(&setup_config.erc721_contract_path)
-            .await?;
+        let erc721_class_hash = self.declare_contract(&setup_config.erc721_contract).await?;
 
         let account_class_hash = self
-            .declare_contract_legacy(&setup_config.account_contract_path)
+            .declare_contract(&setup_config.account_contract)
             .await?;
 
         let accounts = if setup_config.num_accounts > 0 {
@@ -378,7 +379,11 @@ impl GatlingShooter {
 
         for _ in 0..num_erc20_transfers {
             match self
-                .transfer(environment.erc20_address, self.get_random_account_address())
+                .transfer(
+                    environment.erc20_address,
+                    self.get_random_account_address(),
+                    felt!("1"),
+                )
                 .await
             {
                 Ok(transaction_hash) => {
@@ -469,13 +474,14 @@ impl GatlingShooter {
         &mut self,
         contract_address: FieldElement,
         account_address: FieldElement,
+        amount: FieldElement,
     ) -> Result<FieldElement> {
         debug!(
-            "Transferring to address={:#064x} with nonce={}",
-            account_address, self.nonce
+            "Transferring {amount} of {contract_address:#064x} to address {account_address:#064x} with nonce={}",
+            self.nonce
         );
 
-        let (amount_low, amount_high) = (felt!("1"), felt!("0"));
+        let (amount_low, amount_high) = (amount, felt!("0"));
 
         let call = Call {
             to: contract_address,
@@ -530,11 +536,15 @@ impl GatlingShooter {
     async fn deploy_erc721(&mut self, class_hash: FieldElement) -> Result<FieldElement> {
         let contract_factory = ContractFactory::new(class_hash, self.account.clone());
 
-        let constructor_args = &[felt!("0xa1"), felt!("0xa2"), self.account.address()];
+        let name = selector!("TestNFT");
+        let symbol = selector!("TNFT");
+        let recipient = self.account.address();
+
+        let constructor_args = vec![name, symbol, recipient];
         let unique = false;
 
         let address =
-            compute_contract_address(self.config.deployer.salt, class_hash, constructor_args);
+            compute_contract_address(self.config.deployer.salt, class_hash, &constructor_args);
 
         if let Ok(contract_class_hash) = self
             .starknet_rpc
@@ -551,7 +561,10 @@ impl GatlingShooter {
 
         let deploy = contract_factory.deploy(constructor_args, self.config.deployer.salt, unique);
 
-        info!("Deploying ERC721 with nonce={}", self.nonce);
+        info!(
+            "Deploying ERC721 with nonce={}, address={address}",
+            self.nonce
+        );
 
         let result = deploy.nonce(self.nonce).max_fee(MAX_FEE).send().await?;
         wait_for_tx(&self.starknet_rpc, result.transaction_hash).await?;
@@ -576,7 +589,7 @@ impl GatlingShooter {
         let (initial_supply_low, initial_supply_high) = (felt!("100000"), felt!("0"));
         let recipient = self.account.address();
 
-        let constructor_args = &[
+        let constructor_args = vec![
             name,
             symbol,
             decimals,
@@ -587,7 +600,7 @@ impl GatlingShooter {
         let unique = false;
 
         let address =
-            compute_contract_address(self.config.deployer.salt, class_hash, constructor_args);
+            compute_contract_address(self.config.deployer.salt, class_hash, &constructor_args);
 
         if let Ok(contract_class_hash) = self
             .starknet_rpc
@@ -604,7 +617,10 @@ impl GatlingShooter {
 
         let deploy = contract_factory.deploy(constructor_args, self.config.deployer.salt, unique);
 
-        info!("Deploying ERC20 contract with nonce={}", self.nonce);
+        info!(
+            "Deploying ERC20 contract with nonce={}, address={address}",
+            self.nonce
+        );
 
         let result = deploy.nonce(self.nonce).max_fee(MAX_FEE).send().await?;
         wait_for_tx(&self.starknet_rpc, result.transaction_hash).await?;
@@ -633,25 +649,24 @@ impl GatlingShooter {
         for i in 0..num_accounts {
             self.account.set_block_id(BlockId::Tag(BlockTag::Pending));
 
+            let fee_token_address = self.config.setup.fee_token_address;
+
             // TODO: Check if OpenZepplinAccountFactory could be used with other type of accounts ? or should we require users to use OpenZepplinAccountFactory ?
-            let account_factory = OpenZeppelinAccountFactory::new(
-                class_hash,
-                chain_id::TESTNET,
-                &self.signer,
-                &self.starknet_rpc,
-            )
-            .await?;
+            let signer = self.signer.clone();
+            let provider = self.starknet_rpc.clone();
+            let account_factory =
+                OpenZeppelinAccountFactory::new(class_hash, chain_id::TESTNET, &signer, &provider)
+                    .await?;
 
             let salt = self.config.deployer.salt + FieldElement::from(i);
 
-            let deploy = account_factory.deploy(salt);
-            info!("Deploying account {i} with salt={}", salt,);
-
+            let deploy = account_factory.deploy(salt).max_fee(MAX_FEE);
             let address = deploy.address();
+            info!("Deploying account {i} with salt {salt} at address {address:#064x}");
 
             if let Ok(account_class_hash) = self
                 .starknet_rpc
-                .get_class_hash_at(BlockId::Tag(BlockTag::Pending), deploy.address())
+                .get_class_hash_at(BlockId::Tag(BlockTag::Pending), address)
                 .await
             {
                 if account_class_hash == class_hash {
@@ -663,6 +678,12 @@ impl GatlingShooter {
                 }
             }
 
+            info!("Funding account {i} at address {address:#064x}");
+            let tx_hash = self
+                .transfer(fee_token_address, address, felt!("0xffffffffff"))
+                .await?;
+            wait_for_tx(&self.starknet_rpc, tx_hash).await?;
+
             let result = deploy.send().await?;
 
             deployed_accounts.push(result.contract_address);
@@ -670,16 +691,28 @@ impl GatlingShooter {
             wait_for_tx(&self.starknet_rpc, result.transaction_hash).await?;
 
             info!("Account {i} deployed at address {address:#064x}");
-
-            let tx_hash = self
-                .transfer(self.config.setup.fee_token_address, address)
-                .await?;
-            wait_for_tx(&self.starknet_rpc, tx_hash).await?;
         }
 
         Ok(deployed_accounts)
     }
 
+    async fn check_already_declared(&self, class_hash: FieldElement) -> Result<bool> {
+        match self
+            .starknet_rpc
+            .get_class(BlockId::Tag(BlockTag::Pending), class_hash)
+            .await
+        {
+            Ok(_) => {
+                warn!("Contract already declared at {class_hash:#064x}");
+                return Ok(true);
+            }
+            Err(ProviderError::StarknetError(StarknetErrorWithMessage {
+                code: MaybeUnknownErrorCode::Known(StarknetError::ClassHashNotFound),
+                ..
+            })) => Ok(false),
+            Err(err) => Err(eyre!(err)),
+        }
+    }
     async fn declare_contract_legacy<'a>(
         &mut self,
         contract_path: impl AsRef<Path>,
@@ -689,40 +722,83 @@ impl GatlingShooter {
             contract_path.as_ref().display()
         );
         let file = std::fs::File::open(contract_path)?;
-
         let contract_artifact: LegacyContractClass = serde_json::from_reader(file)?;
-
         let class_hash = contract_artifact.class_hash()?;
+
+        if self.check_already_declared(class_hash).await? {
+            return Ok(class_hash);
+        }
 
         self.account.set_block_id(BlockId::Tag(BlockTag::Pending));
 
-        // TODO: check if the class hash is already declared before attempting
-        // to declare it, this should be faster
-        match self
+        let tx_resp = self
             .account
             .declare_legacy(Arc::new(contract_artifact))
+            .max_fee(MAX_FEE)
+            .nonce(self.nonce)
             .send()
             .await
-        {
-            Ok(tx_resp) => {
-                info!(
-                    "Contract declared successfully class_hash={:#064x}",
-                    tx_resp.class_hash
-                );
-                Ok(tx_resp.class_hash)
-            }
-            Err(AccountError::Provider(ProviderError::StarknetError(
-                StarknetErrorWithMessage {
-                    code: MaybeUnknownErrorCode::Known(StarknetError::ClassAlreadyDeclared),
-                    ..
-                },
-            ))) => {
-                // TODO: get the class_hash from the already declared error
-                warn!("Contract already declared class_hash={:#064x}", class_hash);
-                Ok(class_hash)
-            }
-            Err(e) => {
-                panic!("Could not declare contract: {e}");
+            .wrap_err("Could not declare contract")?;
+
+        info!(
+            "Contract declared successfully at {:#064x}",
+            tx_resp.class_hash
+        );
+        self.nonce += felt!("1");
+        Ok(tx_resp.class_hash)
+    }
+
+    async fn declare_contract_v1<'a>(
+        &mut self,
+        contract_path: impl AsRef<Path>,
+        casm_class_hash: FieldElement,
+    ) -> Result<FieldElement> {
+        // Sierra class artifact. Output of the `starknet-compile` command
+        info!(
+            "Declaring contract from path {}",
+            contract_path.as_ref().display()
+        );
+        let file = std::fs::File::open(contract_path)?;
+        let contract_artifact: SierraClass = serde_json::from_reader(file)?;
+        let class_hash = contract_artifact.class_hash()?;
+
+        if self.check_already_declared(class_hash).await? {
+            return Ok(class_hash);
+        }
+
+        // `SingleOwnerAccount` defaults to checking nonce and estimating fees against the latest
+        // block. Optionally change the target block to pending with the following line:
+        self.account.set_block_id(BlockId::Tag(BlockTag::Pending));
+
+        // We need to flatten the ABI into a string first
+        let flattened_class = contract_artifact.flatten()?;
+
+        let tx_resp = self
+            .account
+            .declare(Arc::new(flattened_class), casm_class_hash)
+            .max_fee(MAX_FEE)
+            .nonce(self.nonce)
+            .send()
+            .await
+            .wrap_err("Could not declare contract")?;
+
+        info!(
+            "Contract declared successfully at {:#064x}",
+            tx_resp.class_hash
+        );
+        self.nonce += felt!("1");
+        Ok(tx_resp.class_hash)
+    }
+
+    async fn declare_contract(
+        &mut self,
+        contract_source: &crate::config::ContractSourceConfig,
+    ) -> Result<FieldElement> {
+        match contract_source {
+            ContractSourceConfig::V0(path) => self.declare_contract_legacy(&path).await,
+            ContractSourceConfig::V1(config) => {
+                self.declare_contract_v1(&config.path, config.get_casm_hash()?)
+                    .await
             }
         }
     }

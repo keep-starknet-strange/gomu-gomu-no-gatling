@@ -6,15 +6,12 @@ use color_eyre::{eyre::eyre, Result};
 use lazy_static::lazy_static;
 use log::debug;
 
-use starknet::core::types::{BlockId, StarknetError, TransactionStatus};
+use starknet::core::types::{BlockId, ExecutionResult, StarknetError};
 use starknet::core::{crypto::compute_hash_on_elements, types::FieldElement};
 use starknet::providers::{jsonrpc::HttpTransport, JsonRpcClient, Provider};
 use starknet::providers::{MaybeUnknownErrorCode, ProviderError};
 use starknet::{
-    core::types::{
-        MaybePendingTransactionReceipt::{PendingReceipt, Receipt},
-        TransactionReceipt::{Declare, Deploy, DeployAccount, Invoke, L1Handler},
-    },
+    core::types::MaybePendingTransactionReceipt::{PendingReceipt, Receipt},
     providers::StarknetErrorWithMessage,
 };
 
@@ -118,25 +115,18 @@ pub async fn wait_for_tx(
 
         match provider.get_transaction_receipt(tx_hash).await {
             Ok(Receipt(receipt)) => {
-                let status = match receipt {
-                    Invoke(receipt) => receipt.status,
-                    Declare(receipt) => receipt.status,
-                    Deploy(receipt) => receipt.status,
-                    DeployAccount(receipt) => receipt.status,
-                    L1Handler(receipt) => receipt.status,
-                };
+                // Logic copied from starkli and the following comment too
+                // tWith JSON-RPC, once we get a receipt, the transaction must have been confirmed.
+                // Rejected transactions simply aren't available. This needs to be changed once we
+                // implement the sequencer fallback.
 
-                match status {
-                    TransactionStatus::Pending => {
-                        debug!("Waiting for transaction {tx_hash:#064x} to be accepted");
-                        tokio::time::sleep(WAIT_FOR_TX_SLEEP).await;
+                match receipt.execution_result() {
+                    ExecutionResult::Succeeded => {
+                        return Ok(());
                     }
-                    TransactionStatus::AcceptedOnL2 | TransactionStatus::AcceptedOnL1 => {
-                        return Ok(())
-                    }
-                    TransactionStatus::Rejected => {
+                    ExecutionResult::Reverted { reason } => {
                         return Err(eyre!(format!(
-                            "Transaction {tx_hash:#064x} has been rejected"
+                            "Transaction {tx_hash:#064x} has been rejected/reverted: {reason}"
                         )));
                     }
                 }
