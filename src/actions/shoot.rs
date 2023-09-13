@@ -80,7 +80,8 @@ impl GatlingShooter {
             signer.clone(),
             config.deployer.address,
             chain_id::TESTNET,
-            // TODO: How should we decide what to use here ?
+            // Legacy is for cairo0 contracts, New is for cairo1
+            // Passing Legacy since we're using the 0x2 account which is cairo0
             ExecutionEncoding::Legacy,
         );
 
@@ -770,7 +771,7 @@ impl GatlingShooter {
         self.account.set_block_id(BlockId::Tag(BlockTag::Pending));
 
         // We need to flatten the ABI into a string first
-        let flattened_class = contract_artifact.flatten().unwrap();
+        let flattened_class = contract_artifact.flatten()?;
 
         let tx_resp = self
             .account
