@@ -1,0 +1,16 @@
+name: 'Gomu Gomu no Gatling'
+description: 'Run Gomu Gomu no Gatling to benchmark Starknet Sequencers'
+branding:
+  icon: 'activity-circle'
+  color: 'orange'
+inputs:
+  config_path:
+    description: 'Path to the configuration file'
+    required: true
+runs:
+  using: 'composite'
+  steps:
+    - run: cargo build --release
+      shell: bash
+    - run: ./target/release/gatling shoot --c ${{ inputs.config_path }}
+      shell: bash
