@@ -34,7 +34,7 @@ use std::time::SystemTime;
 use url::Url;
 
 // Used to bypass validation
-pub static MAX_FEE: FieldElement = felt!("0xfffffffffff");
+pub static MAX_FEE: FieldElement = felt!("0xffffffff");
 
 /// Shoot the load test simulation.
 pub async fn shoot(config: GatlingConfig) -> Result<GatlingReport> {
