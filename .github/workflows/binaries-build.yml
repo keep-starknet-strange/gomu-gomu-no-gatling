@@ -25,24 +25,27 @@ jobs:
           - aarch64-unknown-linux-gnu
           - x86_64-apple-darwin
           - x86_64-unknown-linux-gnu
-          # - x86_64-pc-windows-gnu
+          - x86_64-pc-windows-gnu
           - x86_64-pc-windows-msvc
         include:
           - build: aarch64-apple-darwin
             os: macos-latest
-            bin_name: madara
+            bin_name: gatling
           - build: aarch64-unknown-linux-gnu
             os: ubuntu-latest
-            bin_name: madara
+            bin_name: gatling
           - build: x86_64-apple-darwin
             os: macos-latest
-            bin_name: madara
+            bin_name: gatling
           - build: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            bin_name: madara
+            bin_name: gatling
+          - build: x86_64-pc-windows-gnu
+            os: windows-latest
+            bin_name: gatling.exe
           - build: x86_64-pc-windows-msvc
             os: windows-latest
-            bin_name: madara.exe
+            bin_name: gatling.exe
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
@@ -51,6 +54,15 @@ jobs:
       - name: Setup rust toolchain
         run: |
           rustup target add ${{ matrix.build }}
+
+      - name: Setup build deps (aarch64-unknown-linux-gnu)
+        if: matrix.build == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt update
+          sudo apt install -y g++-aarch64-linux-gnu libc6-dev-arm64-cross
+          export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+          export CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc
+          export CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g+
 
       - name: Build binaries
         run: cargo build --release --target ${{ matrix.build }}
