@@ -11,8 +11,5 @@ runs:
   using: "composite"
   steps:
     - run: wget https://github.com/keep-starknet-strange/gomu-gomu-no-gatling/releases/download/v0.0.2-1-alpha/x86_64-unknown-linux-gnu-gatling -O gatling
-      shell: bash
     - run: chmod +x gatling
-      shell: bash
     - run: ./gatling shoot --c ${{ inputs.config_path }}
-      shell: bash
