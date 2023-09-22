@@ -24,7 +24,7 @@ pub const BLOCK_TIME: u64 = 6;
 pub struct Metric {
     pub name: &'static str,
     pub unit: &'static str,
-    pub compute: fn(&Vec<u64>) -> f64,
+    pub compute: fn(&[u64]) -> f64,
 }
 
 /// A struct that contains the result of a metric computation alognside the name and unit
@@ -154,15 +154,15 @@ impl fmt::Display for BenchmarkReport {
     }
 }
 
-fn average_tps(num_tx_per_block: &Vec<u64>) -> f64 {
+fn average_tps(num_tx_per_block: &[u64]) -> f64 {
     average_tpb(num_tx_per_block) / BLOCK_TIME as f64
 }
 
-fn average_tpb(num_tx_per_block: &Vec<u64>) -> f64 {
+fn average_tpb(num_tx_per_block: &[u64]) -> f64 {
     num_tx_per_block.iter().map(|x| *x as f64).mean()
 }
 
-pub fn compute_all_metrics<'a>(num_tx_per_block: Vec<u64>) -> Vec<MetricResult> {
+pub fn compute_all_metrics(num_tx_per_block: Vec<u64>) -> Vec<MetricResult> {
     METRICS
         .iter()
         .map(|metric| {
