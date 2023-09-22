@@ -704,7 +704,7 @@ impl GatlingShooter {
         {
             Ok(_) => {
                 warn!("Contract already declared at {class_hash:#064x}");
-                return Ok(true);
+                Ok(true)
             }
             Err(ProviderError::StarknetError(StarknetErrorWithMessage {
                 code: MaybeUnknownErrorCode::Known(StarknetError::ClassHashNotFound),

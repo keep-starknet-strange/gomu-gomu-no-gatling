@@ -1,0 +1,65 @@
+---
+name: Task - Build binaries and publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag_name:
+        description: "Release tag name"
+        type: string
+        required: true
+  workflow_call:
+    inputs:
+      release_tag_name:
+        description: "Release tag name"
+        type: string
+        required: true
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        build:
+          - aarch64-apple-darwin
+          - aarch64-unknown-linux-gnu
+          - x86_64-apple-darwin
+          - x86_64-unknown-linux-gnu
+          # - x86_64-pc-windows-gnu
+          - x86_64-pc-windows-msvc
+        include:
+          - build: aarch64-apple-darwin
+            os: macos-latest
+            bin_name: madara
+          - build: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            bin_name: madara
+          - build: x86_64-apple-darwin
+            os: macos-latest
+            bin_name: madara
+          - build: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            bin_name: madara
+          - build: x86_64-pc-windows-msvc
+            os: windows-latest
+            bin_name: madara.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Setup rust toolchain
+        run: |
+          rustup target add ${{ matrix.build }}
+
+      - name: Build binaries
+        run: cargo build --release --target ${{ matrix.build }}
+
+      - name: Upload binaries to release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: target/${{ matrix.build }}/release/${{ matrix.bin_name }}
+          asset_name: ${{ matrix.build}}-${{ matrix.bin_name }}
+          tag: ${{ inputs.release_tag_name }}
+          overwrite: true
