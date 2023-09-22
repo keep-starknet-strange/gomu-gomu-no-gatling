@@ -10,7 +10,6 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - run: cargo build --release
-      shell: bash
-    - run: ./target/release/gatling shoot --c ${{ inputs.config_path }}
-      shell: bash
+    - run: wget https://github.com/keep-starknet-strange/gomu-gomu-no-gatling/releases/download/v0.0.2-1-alpha/x86_64-unknown-linux-gnu-gatling -O gatling
+    - run: chmod +x gatling
+    - run: ./gatling shoot --c ${{ inputs.config_path }}
