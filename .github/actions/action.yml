@@ -14,5 +14,5 @@ runs:
       shell: bash
     - run: chmod +x gatling
       shell: bash
-    - run: ./gatling shoot --c ${{ inputs.config_path }}
+    - run: ./gatling shoot -c ${{ inputs.config_path }}
       shell: bash
