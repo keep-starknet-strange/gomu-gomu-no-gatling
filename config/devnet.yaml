@@ -10,4 +10,4 @@ simulation:
 deployer:
   address: "0x7f61fa3893ad0637b2ff76fed23ebbb91835aacd4f743c2347716f856438429"
   signing_key: "0x259f4329e6f4590b9a164106cf6a659e"
-  salt: 1
+  salt: "1"

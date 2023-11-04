@@ -13,6 +13,7 @@ setup:
 
   fee_token_address: "0x049d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7"
   num_accounts: 3
+  num_send_accounts: 1
 
 run:
   num_erc20_transfers: 1200
@@ -23,6 +24,6 @@ report:
   reports_dir: "reports"
 
 deployer:
-  salt: 1
+  salt: "1"
   address: "0x0000000000000000000000000000000000000000000000000000000000000002"
   signing_key: "0x00c1cf1490de1352865301bb8705143f3ef938f97fdf892f1090dcb5ac7bcd1d"

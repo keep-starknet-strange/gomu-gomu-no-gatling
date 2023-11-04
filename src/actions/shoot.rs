@@ -66,7 +66,7 @@ pub struct GatlingShooter {
 pub struct GatlingEnvironment {
     erc20_address: FieldElement,
     erc721_address: FieldElement,
-    accounts: Vec<FieldElement>,
+    accounts: Vec<SingleOwnerAccount<Arc<JsonRpcClient<HttpTransport>>, LocalWallet>>,
 }
 
 impl GatlingShooter {
@@ -106,16 +106,19 @@ impl GatlingShooter {
     /// Return a random account address from the ones deployed during the setup phase
     /// or the deployer account address if no accounts were deployed or
     /// if the environment is not yet populated
-    pub fn get_random_account_address(&self) -> FieldElement {
+    pub fn get_random_account(
+        &self,
+    ) -> SingleOwnerAccount<Arc<JsonRpcClient<HttpTransport>>, LocalWallet> {
         match self.environment() {
             Ok(environment) => {
                 let mut rng = rand::thread_rng();
-                *environment
+                environment
                     .accounts
                     .choose(&mut rng)
-                    .unwrap_or(&self.account.address())
+                    .unwrap_or(&self.account)
+                    .clone()
             }
-            Err(_) => self.account.address(),
+            Err(_) => self.account.clone(),
         }
     }
 
@@ -381,7 +384,8 @@ impl GatlingShooter {
             match self
                 .transfer(
                     environment.erc20_address,
-                    self.get_random_account_address(),
+                    self.get_random_account(),
+                    FieldElement::ZERO,
                     felt!("1"),
                 )
                 .await
@@ -473,11 +477,14 @@ impl GatlingShooter {
     async fn transfer(
         &mut self,
         contract_address: FieldElement,
-        account_address: FieldElement,
+        account: SingleOwnerAccount<Arc<JsonRpcClient<HttpTransport>>, LocalWallet>,
+        recipient: FieldElement,
         amount: FieldElement,
     ) -> Result<FieldElement> {
+        let from_address = account.address();
+
         debug!(
-            "Transferring {amount} of {contract_address:#064x} to address {account_address:#064x} with nonce={}",
+            "Transferring {amount} of {contract_address:#064x} from address {from_address:#064x} to address {recipient:#064x} with nonce={}",
             self.nonce
         );
 
@@ -486,11 +493,10 @@ impl GatlingShooter {
         let call = Call {
             to: contract_address,
             selector: selector!("transfer"),
-            calldata: vec![account_address, amount_low, amount_high],
+            calldata: vec![recipient, amount_low, amount_high],
         };
 
-        let result = self
-            .account
+        let result = account
             .execute(vec![call])
             .max_fee(MAX_FEE)
             .nonce(self.nonce)
@@ -514,7 +520,7 @@ impl GatlingShooter {
             to: contract_address,
             selector: selector!("mint"),
             calldata: vec![
-                self.get_random_account_address(),
+                self.get_random_account().clone().address(),
                 token_id_low,
                 token_id_high,
             ],
@@ -641,10 +647,12 @@ impl GatlingShooter {
         &mut self,
         class_hash: FieldElement,
         num_accounts: usize,
-    ) -> Result<Vec<FieldElement>> {
+    ) -> Result<Vec<SingleOwnerAccount<Arc<JsonRpcClient<HttpTransport>>, LocalWallet>>> {
         info!("Creating {} accounts", num_accounts);
 
-        let mut deployed_accounts = Vec::with_capacity(num_accounts);
+        let mut deployed_accounts: Vec<
+            SingleOwnerAccount<Arc<JsonRpcClient<HttpTransport>>, LocalWallet>,
+        > = Vec::with_capacity(num_accounts);
 
         for i in 0..num_accounts {
             self.account.set_block_id(BlockId::Tag(BlockTag::Pending));
@@ -671,7 +679,16 @@ impl GatlingShooter {
             {
                 if account_class_hash == class_hash {
                     warn!("Account {i} already deployed at address {address:#064x}");
-                    deployed_accounts.push(address);
+                    let account = SingleOwnerAccount::new(
+                        self.starknet_rpc.clone(),
+                        signer.clone(),
+                        address,
+                        chain_id::TESTNET,
+                        // Legacy is for cairo0 contracts, New is for cairo1
+                        // Passing Legacy since we're using the 0x2 account which is cairo0
+                        ExecutionEncoding::Legacy,
+                    );
+                    deployed_accounts.push(account);
                     continue;
                 } else {
                     return Err(eyre!("Account {i} already deployed at address {address:#064x} with a different class hash {account_class_hash:#064x}, expected {class_hash:#064x}"));
@@ -680,13 +697,28 @@ impl GatlingShooter {
 
             info!("Funding account {i} at address {address:#064x}");
             let tx_hash = self
-                .transfer(fee_token_address, address, felt!("0xffffffffff"))
+                .transfer(
+                    fee_token_address,
+                    self.account.clone(),
+                    address,
+                    felt!("0xffffffffff"),
+                )
                 .await?;
             wait_for_tx(&self.starknet_rpc, tx_hash).await?;
 
             let result = deploy.send().await?;
 
-            deployed_accounts.push(result.contract_address);
+            let account = SingleOwnerAccount::new(
+                self.starknet_rpc.clone(),
+                signer.clone(),
+                result.contract_address,
+                chain_id::TESTNET,
+                // Legacy is for cairo0 contracts, New is for cairo1
+                // Passing Legacy since we're using the 0x2 account which is cairo0
+                ExecutionEncoding::Legacy,
+            );
+
+            deployed_accounts.push(account);
 
             wait_for_tx(&self.starknet_rpc, result.transaction_hash).await?;
 

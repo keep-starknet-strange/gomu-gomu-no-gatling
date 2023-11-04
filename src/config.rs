@@ -86,6 +86,7 @@ pub struct SetupConfig {
     pub account_contract: ContractSourceConfig,
     pub fee_token_address: FieldElement,
     pub num_accounts: usize,
+    pub num_send_accounts: usize,
 }
 
 #[derive(Debug, Deserialize, Clone)]

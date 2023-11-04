@@ -10,4 +10,4 @@ simulation:
 deployer:
   address: "0x0000000000000000000000000000000000000000000000000000000000000001"
   signing_key: "0x0"
-  salt: 1
+  salt: "1"
