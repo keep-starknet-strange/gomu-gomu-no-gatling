@@ -1,6 +1,9 @@
 use crate::config::{ContractSourceConfig, GatlingConfig};
 use crate::generators::get_rng;
-use crate::utils::{compute_contract_address, sanitize_filename, wait_for_tx, SYSINFO};
+use crate::utils::{
+    build_benchmark_report, compute_contract_address, sanitize_filename, wait_for_tx,
+    BenchmarkType, SYSINFO,
+};
 use color_eyre::eyre::Context;
 use color_eyre::{eyre::eyre, Report as EyreReport, Result};
 
@@ -46,7 +49,7 @@ pub async fn shoot(config: GatlingConfig) -> Result<GatlingReport> {
     shooter.setup(&mut gatling_report).await?;
 
     // Run the benchmarks.
-    shooter.run(&mut gatling_report).await;
+    shooter.run(&mut gatling_report).await?;
 
     // Trigger the teardown phase.
     shooter.teardown(&mut gatling_report).await?;
@@ -88,7 +91,7 @@ impl GatlingShooter {
 
         let nonce = account.get_nonce().await?;
 
-        let mut nonces = HashMap::new();
+        let mut nonces: HashMap<FieldElement, FieldElement> = HashMap::new();
         nonces.insert(config.deployer.address, nonce);
 
         Ok(Self {
@@ -239,7 +242,7 @@ impl GatlingShooter {
     }
 
     /// Run the benchmarks.
-    async fn run<'a>(&mut self, gatling_report: &'a mut GatlingReport) {
+    async fn run<'a>(&mut self, gatling_report: &'a mut GatlingReport) -> Result<()> {
         info!("Firing !");
         let num_blocks = self.config.report.num_blocks;
 
@@ -247,129 +250,85 @@ impl GatlingShooter {
 
         // Run ERC20 transfer transactions
         let erc20_start_block = self.starknet_rpc.block_number().await;
-        let (transactions, _) = self.run_erc20().await;
-        self.check_transactions(transactions).await;
+        let (erc20_transactions, _) = self.run_erc20().await;
         let erc20_end_block = self.starknet_rpc.block_number().await;
 
         // Run ERC721 mint transactions
         let erc721_start_block = self.starknet_rpc.block_number().await;
-
-        let (transactions, _) = self.run_erc721().await;
-        self.check_transactions(transactions).await;
+        let (erc721_transactions, _) = self.run_erc721().await;
         let erc721_end_block = self.starknet_rpc.block_number().await;
 
         let end_block = self.starknet_rpc.block_number().await;
 
         if let Err(err) = erc20_start_block.as_ref().and(erc20_end_block.as_ref()) {
-            warn!("Skip creating ERC20 reports, failed to get current block number because of `{err}`");
+            warn!(
+            "Skip creating ERC20 reports, failed to get current block number because of `{err}`"
+        );
         } else {
             // The transactions we sent will be incorporated in the next accepted block
-            let erc20_start_block = erc20_start_block.unwrap() + 1;
-            let erc20_end_block = erc20_end_block.unwrap();
-
-            let benchmark_name = "ERC20".to_string();
-
-            let benchmark_report = BenchmarkReport::from_block_range(
+            build_benchmark_report(
                 self.starknet_rpc.clone(),
-                benchmark_name.clone(),
-                erc20_start_block,
-                erc20_end_block,
+                "ERC20".to_string(),
+                BenchmarkType::BlockRange(erc20_start_block.unwrap() + 1, erc20_end_block.unwrap()),
+                gatling_report,
             )
-            .await;
+            .await?;
 
-            match benchmark_report {
-                Ok(benchmark_report) => gatling_report.benchmark_reports.push(benchmark_report),
-                Err(err) => {
-                    warn!("Failed to create benchmark report `{benchmark_name}` with `{err}`")
-                }
-            }
-
-            let benchmark_name = format!("ERC20 for the last {num_blocks} blocks");
-
-            let benchmark_report = BenchmarkReport::from_last_x_blocks(
+            build_benchmark_report(
                 self.starknet_rpc.clone(),
-                benchmark_name.clone(),
-                erc20_start_block,
-                erc20_end_block,
-                num_blocks,
+                format!("ERC20_latest_{num_blocks}").to_string(),
+                BenchmarkType::LatestBlocks(num_blocks),
+                gatling_report,
             )
-            .await;
-
-            match benchmark_report {
-                Ok(benchmark_report) => gatling_report.benchmark_reports.push(benchmark_report),
-                Err(err) => {
-                    warn!("Failed to create benchmark report `{benchmark_name}` with `{err}`")
-                }
-            }
+            .await?;
         }
 
         if let Err(err) = erc721_start_block.as_ref().and(erc721_end_block.as_ref()) {
-            warn!("Skip creating ERC721 reports, failed to get current block number because of `{err}`");
+            warn!(
+            "Skip creating ERC721 reports, failed to get current block number because of `{err}`"
+        );
         } else {
             // The transactions we sent will be incorporated in the next accepted block
-            let erc721_start_block = erc721_start_block.unwrap() + 1;
-            let erc721_end_block = erc721_end_block.unwrap();
-
-            let benchmark_name = "ERC721".to_string();
-
-            let benchmark_report = BenchmarkReport::from_block_range(
+            build_benchmark_report(
                 self.starknet_rpc.clone(),
-                benchmark_name.clone(),
-                erc721_start_block,
-                erc721_end_block,
+                "ERC721".to_string(),
+                BenchmarkType::BlockRange(
+                    erc721_start_block.unwrap() + 1,
+                    erc721_end_block.unwrap(),
+                ),
+                gatling_report,
             )
-            .await;
+            .await?;
 
-            match benchmark_report {
-                Ok(benchmark_report) => gatling_report.benchmark_reports.push(benchmark_report),
-                Err(err) => {
-                    warn!("Failed to create benchmark report `{benchmark_name}` with `{err}`")
-                }
-            }
-
-            let benchmark_name = format!("ERC721 for the last {num_blocks} blocks");
-
-            let benchmark_report = BenchmarkReport::from_last_x_blocks(
+            build_benchmark_report(
                 self.starknet_rpc.clone(),
-                benchmark_name.clone(),
-                erc721_start_block,
-                erc721_end_block,
-                num_blocks,
+                format!("ERC721_latest_{num_blocks}").to_string(),
+                BenchmarkType::LatestBlocks(num_blocks),
+                gatling_report,
             )
-            .await;
-
-            match benchmark_report {
-                Ok(benchmark_report) => gatling_report.benchmark_reports.push(benchmark_report),
-                Err(err) => {
-                    warn!("Failed to create benchmark report `{benchmark_name}` with `{err}`")
-                }
-            }
+            .await?;
         }
 
         if let Err(err) = start_block.as_ref().and(end_block.as_ref()) {
-            warn!("Skip creating full session report, failed to get current block number because of `{err}`");
+            warn!(
+            "Skip creating ERC20 reports, failed to get current block number because of `{err}`"
+        );
         } else {
             // The transactions we sent will be incorporated in the next accepted block
-            let start_block = start_block.unwrap() + 1;
-            let end_block = end_block.unwrap();
-
-            let benchmark_name = "Full Session Report".to_string();
-
-            let benchmark_report = BenchmarkReport::from_block_range(
+            build_benchmark_report(
                 self.starknet_rpc.clone(),
-                benchmark_name.clone(),
-                start_block,
-                end_block,
+                "Full".to_string(),
+                BenchmarkType::BlockRange(start_block.unwrap() + 1, end_block.unwrap()),
+                gatling_report,
             )
+            .await?;
+        }
+
+        // Check transactions validity
+        self.check_transactions([erc20_transactions, erc721_transactions].concat())
             .await;
 
-            match benchmark_report {
-                Ok(benchmark_report) => gatling_report.benchmark_reports.push(benchmark_report),
-                Err(err) => {
-                    warn!("Failed to create benchmark report `{benchmark_name}` with `{err}`")
-                }
-            }
-        }
+        Ok(())
     }
 
     async fn run_erc20(&mut self) -> (Vec<FieldElement>, Vec<EyreReport>) {
@@ -491,10 +450,7 @@ impl GatlingShooter {
         let from_address = account.address();
         let nonce = match self.nonces.get(&from_address) {
             Some(nonce) => *nonce,
-            None => {
-                let nonce = account.get_nonce().await?;
-                nonce
-            }
+            None => account.get_nonce().await?,
         };
 
         debug!(
@@ -529,10 +485,7 @@ impl GatlingShooter {
     ) -> Result<FieldElement> {
         let nonce = match self.nonces.get(&contract_address) {
             Some(nonce) => *nonce,
-            None => {
-                let nonce = self.account.get_nonce().await?;
-                nonce
-            }
+            None => self.account.get_nonce().await?,
         };
 
         debug!(

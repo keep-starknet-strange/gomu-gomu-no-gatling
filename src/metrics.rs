@@ -2,10 +2,8 @@ use crate::utils::{get_num_tx_per_block, SYSINFO};
 
 use color_eyre::Result;
 
-use log::warn;
-
 use serde_json::{json, Value};
-use starknet::providers::{jsonrpc::HttpTransport, JsonRpcClient};
+use starknet::providers::{jsonrpc::HttpTransport, JsonRpcClient, Provider};
 use statrs::statistics::Statistics;
 use std::{fmt, sync::Arc};
 
@@ -75,25 +73,10 @@ impl BenchmarkReport {
     pub async fn from_last_x_blocks<'a>(
         starknet_rpc: Arc<JsonRpcClient<HttpTransport>>,
         name: String,
-        first_block: u64,
-        last_block: u64,
-        num_last_blocks: u64,
+        num_blocks: u64,
     ) -> Result<BenchmarkReport> {
-        let mut start_block = last_block - num_last_blocks + 1;
-        let mut end_block = last_block;
-
-        let actual_num_blocks = last_block - first_block + 1;
-
-        if num_last_blocks > actual_num_blocks {
-            warn!("Creating benchmark report `{name}` using the last {num_last_blocks} blocks while only {actual_num_blocks} blocks have transactions, you should either use a lower number of blocks for the metrics or more transactions")
-        } else {
-            // Whenever possible, skip the first and last blocks from the metrics
-            // to make sure all the blocks used for calculating metrics are full
-            if actual_num_blocks - num_last_blocks > 2 {
-                start_block += 1;
-                end_block -= 1;
-            }
-        }
+        let end_block = starknet_rpc.block_number().await?;
+        let start_block = end_block - num_blocks;
 
         let num_tx_per_block = get_num_tx_per_block(starknet_rpc, start_block, end_block).await?;
         let metrics = compute_all_metrics(num_tx_per_block);
