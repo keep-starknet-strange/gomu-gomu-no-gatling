@@ -112,6 +112,7 @@ const WAIT_FOR_TX_SLEEP: Duration = Duration::from_millis(100);
 pub async fn wait_for_tx(
     provider: &JsonRpcClient<HttpTransport>,
     tx_hash: FieldElement,
+    check_interval: Duration,
 ) -> Result<()> {
     let start = SystemTime::now();
 
@@ -157,6 +158,8 @@ pub async fn wait_for_tx(
                 )))
             }
         }
+
+        tokio::time::sleep(check_interval).await;
     }
 }
 

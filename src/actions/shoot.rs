@@ -33,12 +33,13 @@ use starknet::providers::{MaybeUnknownErrorCode, StarknetErrorWithMessage};
 use starknet::signers::{LocalWallet, SigningKey};
 use std::str;
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use url::Url;
 
 // Used to bypass validation
 pub static MAX_FEE: FieldElement = felt!("0xffffffff");
+pub static CHECK_INTERVAL: Duration = Duration::from_secs(2);
 
 /// Shoot the load test simulation.
 pub async fn shoot(config: GatlingConfig) -> Result<GatlingReport> {
@@ -213,7 +214,7 @@ impl GatlingShooter {
         let mut errors = Vec::new();
 
         for transaction in transactions {
-            match wait_for_tx(&self.starknet_rpc, transaction).await {
+            match wait_for_tx(&self.starknet_rpc, transaction, CHECK_INTERVAL).await {
                 Ok(_) => {
                     accepted_txs.push(transaction);
                     debug!("Transaction {:#064x} accepted", transaction)
@@ -560,7 +561,7 @@ impl GatlingShooter {
         info!("Deploying ERC721 with nonce={}, address={address}", nonce);
 
         let result = deploy.nonce(nonce).max_fee(MAX_FEE).send().await?;
-        wait_for_tx(&self.starknet_rpc, result.transaction_hash).await?;
+        wait_for_tx(&self.starknet_rpc, result.transaction_hash, CHECK_INTERVAL).await?;
 
         debug!(
             "Deploy ERC721 transaction accepted {:#064x}",
@@ -615,7 +616,7 @@ impl GatlingShooter {
         );
 
         let result = deploy.nonce(nonce).max_fee(MAX_FEE).send().await?;
-        wait_for_tx(&self.starknet_rpc, result.transaction_hash).await?;
+        wait_for_tx(&self.starknet_rpc, result.transaction_hash, CHECK_INTERVAL).await?;
 
         debug!(
             "Deploy ERC20 transaction accepted {:#064x}",
@@ -688,7 +689,7 @@ impl GatlingShooter {
                     felt!("0xffffffffff"),
                 )
                 .await?;
-            wait_for_tx(&self.starknet_rpc, tx_hash).await?;
+            wait_for_tx(&self.starknet_rpc, tx_hash, CHECK_INTERVAL).await?;
 
             let result = deploy.send().await?;
 
@@ -704,7 +705,7 @@ impl GatlingShooter {
 
             deployed_accounts.push(account);
 
-            wait_for_tx(&self.starknet_rpc, result.transaction_hash).await?;
+            wait_for_tx(&self.starknet_rpc, result.transaction_hash, CHECK_INTERVAL).await?;
 
             info!("Account {i} deployed at address {address:#064x}");
         }
