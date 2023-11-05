@@ -89,10 +89,15 @@ impl GatlingShooter {
             ExecutionEncoding::Legacy,
         );
 
-        let nonce = account.get_nonce().await?;
+        // Fails if nonce is null (which is the case for 1st startup)
+        let cur_nonce = account.get_nonce().await?;
 
         let mut nonces: HashMap<FieldElement, FieldElement> = HashMap::new();
-        nonces.insert(config.deployer.address, nonce);
+        if cur_nonce == FieldElement::ZERO {
+            nonces.insert(config.deployer.address, FieldElement::ONE);
+        } else {
+            nonces.insert(config.deployer.address, cur_nonce);
+        }
 
         Ok(Self {
             config,
@@ -243,22 +248,31 @@ impl GatlingShooter {
 
     /// Run the benchmarks.
     async fn run<'a>(&mut self, gatling_report: &'a mut GatlingReport) -> Result<()> {
-        info!("Firing !");
+        info!("❤️‍🔥 FIRING ! ❤️‍🔥");
+
         let num_blocks = self.config.report.num_blocks;
 
         let start_block = self.starknet_rpc.block_number().await;
 
         // Run ERC20 transfer transactions
         let erc20_start_block = self.starknet_rpc.block_number().await;
+
         let (erc20_transactions, _) = self.run_erc20().await;
+        self.check_transactions(erc20_transactions).await;
+
         let erc20_end_block = self.starknet_rpc.block_number().await;
 
         // Run ERC721 mint transactions
         let erc721_start_block = self.starknet_rpc.block_number().await;
+
         let (erc721_transactions, _) = self.run_erc721().await;
+        self.check_transactions(erc721_transactions).await;
+
         let erc721_end_block = self.starknet_rpc.block_number().await;
 
         let end_block = self.starknet_rpc.block_number().await;
+
+        // Build benchmark reports
 
         if let Err(err) = erc20_start_block.as_ref().and(erc20_end_block.as_ref()) {
             warn!(
@@ -323,10 +337,6 @@ impl GatlingShooter {
             )
             .await?;
         }
-
-        // Check transactions validity
-        self.check_transactions([erc20_transactions, erc721_transactions].concat())
-            .await;
 
         Ok(())
     }
