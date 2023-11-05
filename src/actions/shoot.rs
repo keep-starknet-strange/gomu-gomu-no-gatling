@@ -7,6 +7,7 @@ use color_eyre::{eyre::eyre, Report as EyreReport, Result};
 use log::{debug, info, warn};
 use starknet::core::types::contract::SierraClass;
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use crate::metrics::BenchmarkReport;
@@ -58,7 +59,7 @@ pub struct GatlingShooter {
     starknet_rpc: Arc<JsonRpcClient<HttpTransport>>,
     signer: LocalWallet,
     account: SingleOwnerAccount<Arc<JsonRpcClient<HttpTransport>>, LocalWallet>,
-    nonce: FieldElement,
+    nonces: HashMap<FieldElement, FieldElement>,
     environment: Option<GatlingEnvironment>, // Will be populated in setup phase
 }
 
@@ -87,12 +88,15 @@ impl GatlingShooter {
 
         let nonce = account.get_nonce().await?;
 
+        let mut nonces = HashMap::new();
+        nonces.insert(config.deployer.address, nonce);
+
         Ok(Self {
             config,
             starknet_rpc,
             signer,
             account,
-            nonce,
+            nonces,
             environment: None,
         })
     }
@@ -482,10 +486,17 @@ impl GatlingShooter {
         amount: FieldElement,
     ) -> Result<FieldElement> {
         let from_address = account.address();
+        let nonce = match self.nonces.get(&from_address) {
+            Some(nonce) => *nonce,
+            None => {
+                let nonce = account.get_nonce().await?;
+                nonce
+            }
+        };
 
         debug!(
             "Transferring {amount} of {contract_address:#064x} from address {from_address:#064x} to address {recipient:#064x} with nonce={}",
-            self.nonce
+            nonce,
         );
 
         let (amount_low, amount_high) = (amount, felt!("0"));
@@ -499,19 +510,27 @@ impl GatlingShooter {
         let result = account
             .execute(vec![call])
             .max_fee(MAX_FEE)
-            .nonce(self.nonce)
+            .nonce(nonce)
             .send()
             .await?;
 
-        self.nonce += felt!("1");
+        self.nonces.insert(from_address, nonce + FieldElement::ONE);
 
         Ok(result.transaction_hash)
     }
 
     async fn mint(&mut self, contract_address: FieldElement) -> Result<FieldElement> {
+        let nonce = match self.nonces.get(&contract_address) {
+            Some(nonce) => *nonce,
+            None => {
+                let nonce = self.account.get_nonce().await?;
+                nonce
+            }
+        };
+
         debug!(
             "Minting for address={:#064x} with nonce={}",
-            contract_address, self.nonce
+            contract_address, nonce
         );
 
         let (token_id_low, token_id_high) = (get_rng(), felt!("0x0000"));
@@ -530,17 +549,19 @@ impl GatlingShooter {
             .account
             .execute(vec![call])
             .max_fee(MAX_FEE)
-            .nonce(self.nonce)
+            .nonce(nonce)
             .send()
             .await?;
 
-        self.nonce += felt!("1");
+        self.nonces
+            .insert(contract_address, nonce + FieldElement::ONE);
 
         Ok(result.transaction_hash)
     }
 
     async fn deploy_erc721(&mut self, class_hash: FieldElement) -> Result<FieldElement> {
         let contract_factory = ContractFactory::new(class_hash, self.account.clone());
+        let nonce = self.account.get_nonce().await?;
 
         let name = selector!("TestNFT");
         let symbol = selector!("TNFT");
@@ -567,15 +588,10 @@ impl GatlingShooter {
 
         let deploy = contract_factory.deploy(constructor_args, self.config.deployer.salt, unique);
 
-        info!(
-            "Deploying ERC721 with nonce={}, address={address}",
-            self.nonce
-        );
+        info!("Deploying ERC721 with nonce={}, address={address}", nonce);
 
-        let result = deploy.nonce(self.nonce).max_fee(MAX_FEE).send().await?;
+        let result = deploy.nonce(nonce).max_fee(MAX_FEE).send().await?;
         wait_for_tx(&self.starknet_rpc, result.transaction_hash).await?;
-
-        self.nonce += felt!("1");
 
         debug!(
             "Deploy ERC721 transaction accepted {:#064x}",
@@ -588,6 +604,7 @@ impl GatlingShooter {
 
     async fn deploy_erc20(&mut self, class_hash: FieldElement) -> Result<FieldElement> {
         let contract_factory = ContractFactory::new(class_hash, self.account.clone());
+        let nonce = self.account.get_nonce().await?;
 
         let name = selector!("TestToken");
         let symbol = selector!("TT");
@@ -625,13 +642,11 @@ impl GatlingShooter {
 
         info!(
             "Deploying ERC20 contract with nonce={}, address={address}",
-            self.nonce
+            nonce
         );
 
-        let result = deploy.nonce(self.nonce).max_fee(MAX_FEE).send().await?;
+        let result = deploy.nonce(nonce).max_fee(MAX_FEE).send().await?;
         wait_for_tx(&self.starknet_rpc, result.transaction_hash).await?;
-
-        self.nonce += felt!("1");
 
         debug!(
             "Deploy ERC20 transaction accepted {:#064x}",
@@ -762,12 +777,13 @@ impl GatlingShooter {
         }
 
         self.account.set_block_id(BlockId::Tag(BlockTag::Pending));
+        let nonce = self.account.get_nonce().await?;
 
         let tx_resp = self
             .account
             .declare_legacy(Arc::new(contract_artifact))
             .max_fee(MAX_FEE)
-            .nonce(self.nonce)
+            .nonce(nonce)
             .send()
             .await
             .wrap_err("Could not declare contract")?;
@@ -776,7 +792,6 @@ impl GatlingShooter {
             "Contract declared successfully at {:#064x}",
             tx_resp.class_hash
         );
-        self.nonce += felt!("1");
         Ok(tx_resp.class_hash)
     }
 
@@ -793,6 +808,7 @@ impl GatlingShooter {
         let file = std::fs::File::open(contract_path)?;
         let contract_artifact: SierraClass = serde_json::from_reader(file)?;
         let class_hash = contract_artifact.class_hash()?;
+        let nonce = self.account.get_nonce().await?;
 
         if self.check_already_declared(class_hash).await? {
             return Ok(class_hash);
@@ -809,7 +825,7 @@ impl GatlingShooter {
             .account
             .declare(Arc::new(flattened_class), casm_class_hash)
             .max_fee(MAX_FEE)
-            .nonce(self.nonce)
+            .nonce(nonce)
             .send()
             .await
             .wrap_err("Could not declare contract")?;
@@ -818,7 +834,6 @@ impl GatlingShooter {
             "Contract declared successfully at {:#064x}",
             tx_resp.class_hash
         );
-        self.nonce += felt!("1");
         Ok(tx_resp.class_hash)
     }
 
