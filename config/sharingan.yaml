@@ -1,12 +1,28 @@
 rpc:
-  url: "https://sharingan.madara.zone"
+  url: "https://sharingan.madara.wtf"
 
-simulation:
-  fail_fast: true
-  setup:
-    create_accounts:
-      num_accounts: 10
+setup:
+  erc20_contract:
+    v0: contracts/v0/ERC20.json
 
+  erc721_contract:
+    v0: contracts/v0/ERC721.json
+
+  account_contract:
+    v0: contracts/v0/OpenzeppelinAccount.json
+
+  fee_token_address: "0x049d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7"
+  num_accounts: 3
+
+run:
+  num_erc20_transfers: 1200
+  num_erc721_mints: 1200
+
+report:
+  num_blocks: 4
+  reports_dir: "reports"
+
+# need to add an adress and signing key on sharingan network
 deployer:
   address: "0x0000000000000000000000000000000000000000000000000000000000000001"
   signing_key: "0x0"
