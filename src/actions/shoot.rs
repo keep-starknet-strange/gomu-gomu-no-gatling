@@ -442,7 +442,10 @@ impl GatlingShooter {
         let mut errors = Vec::new();
 
         for _ in 0..num_erc721_mints {
-            match self.mint(environment.erc721_address).await {
+            match self
+                .mint(self.get_random_account(), environment.erc721_address)
+                .await
+            {
                 Ok(transaction_hash) => {
                     accepted_txs.push(transaction_hash);
                 }
@@ -519,7 +522,11 @@ impl GatlingShooter {
         Ok(result.transaction_hash)
     }
 
-    async fn mint(&mut self, contract_address: FieldElement) -> Result<FieldElement> {
+    async fn mint(
+        &mut self,
+        account: SingleOwnerAccount<Arc<JsonRpcClient<HttpTransport>>, LocalWallet>,
+        contract_address: FieldElement,
+    ) -> Result<FieldElement> {
         let nonce = match self.nonces.get(&contract_address) {
             Some(nonce) => *nonce,
             None => {
@@ -545,8 +552,7 @@ impl GatlingShooter {
             ],
         };
 
-        let result = self
-            .account
+        let result = account
             .execute(vec![call])
             .max_fee(MAX_FEE)
             .nonce(nonce)
