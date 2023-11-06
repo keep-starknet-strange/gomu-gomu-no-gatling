@@ -106,7 +106,7 @@ impl fmt::Display for SysInfo {
     }
 }
 
-const WAIT_FOR_TX_TIMEOUT: Duration = Duration::from_secs(30);
+const WAIT_FOR_TX_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub async fn wait_for_tx(
     provider: &JsonRpcClient<HttpTransport>,

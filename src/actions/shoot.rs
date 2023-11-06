@@ -442,8 +442,9 @@ impl GatlingShooter {
         let mut errors = Vec::new();
 
         for _ in 0..num_mints {
+            // TODO: Change the ERC721 contract such that mint is permissionless
             match self
-                .mint(self.get_random_account(), environment.erc721_address)
+                .mint(self.account.clone(), environment.erc721_address)
                 .await
             {
                 Ok(transaction_hash) => {
