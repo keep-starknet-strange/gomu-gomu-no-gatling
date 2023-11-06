@@ -18,6 +18,9 @@ use starknet::{
 use std::time::Duration;
 use sysinfo::{CpuExt, System, SystemExt};
 
+use crate::actions::shoot::GatlingReport;
+use crate::metrics::BenchmarkReport;
+
 lazy_static! {
     pub static ref SYSINFO: SysInfo = SysInfo::new();
 }
@@ -109,6 +112,7 @@ const WAIT_FOR_TX_SLEEP: Duration = Duration::from_millis(100);
 pub async fn wait_for_tx(
     provider: &JsonRpcClient<HttpTransport>,
     tx_hash: FieldElement,
+    check_interval: Duration,
 ) -> Result<()> {
     let start = SystemTime::now();
 
@@ -154,6 +158,8 @@ pub async fn wait_for_tx(
                 )))
             }
         }
+
+        tokio::time::sleep(check_interval).await;
     }
 }
 
@@ -207,4 +213,44 @@ pub fn sanitize_filename(input: &str) -> String {
     };
 
     truncated.to_string()
+}
+
+#[derive(Debug)]
+pub enum BenchmarkType {
+    BlockRange(u64, u64),
+    LatestBlocks(u64),
+}
+
+/// Builds a benchmark report for the given benchmark name and block range
+pub async fn build_benchmark_report(
+    starknet_rpc: Arc<JsonRpcClient<HttpTransport>>,
+    benchmark_name: String,
+    benchmark_type: BenchmarkType,
+    gatling_report: &mut GatlingReport,
+) -> Result<BenchmarkReport> {
+    let benchmark_report = match benchmark_type {
+        BenchmarkType::BlockRange(start, end) => {
+            BenchmarkReport::from_block_range(
+                starknet_rpc.clone(),
+                benchmark_name.clone(),
+                start,
+                end,
+            )
+            .await?
+        }
+        BenchmarkType::LatestBlocks(num_blocks) => {
+            BenchmarkReport::from_last_x_blocks(
+                starknet_rpc.clone(),
+                benchmark_name.clone(),
+                num_blocks,
+            )
+            .await?
+        }
+    };
+
+    gatling_report
+        .benchmark_reports
+        .push(benchmark_report.clone());
+
+    Ok(benchmark_report)
 }

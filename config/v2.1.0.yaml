@@ -29,6 +29,6 @@ report:
   reports_dir: "reports"
 
 deployer:
-  salt: 1
+  salt: "1"
   address: "0x0000000000000000000000000000000000000000000000000000000000000002"
   signing_key: "0x00c1cf1490de1352865301bb8705143f3ef938f97fdf892f1090dcb5ac7bcd1d"

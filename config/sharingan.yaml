@@ -24,6 +24,6 @@ report:
 
 # need to add an adress and signing key on sharingan network
 deployer:
-  salt: 1
-  address: "0x0"
+  address: "0x0000000000000000000000000000000000000000000000000000000000000001"
   signing_key: "0x0"
+  salt: "1"
