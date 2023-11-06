@@ -75,7 +75,8 @@ impl BenchmarkReport {
         name: String,
         num_blocks: u64,
     ) -> Result<BenchmarkReport> {
-        let end_block = starknet_rpc.block_number().await?;
+        // The last block won't be full of transactions, so we skip it
+        let end_block = starknet_rpc.block_number().await? - 1;
         let start_block = end_block - num_blocks;
 
         let num_tx_per_block = get_num_tx_per_block(starknet_rpc, start_block, end_block).await?;
