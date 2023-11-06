@@ -95,11 +95,7 @@ impl GatlingShooter {
         let cur_nonce = account.get_nonce().await?;
 
         let mut nonces: HashMap<FieldElement, FieldElement> = HashMap::new();
-        if cur_nonce == FieldElement::ZERO {
-            nonces.insert(config.deployer.address, FieldElement::ONE);
-        } else {
-            nonces.insert(config.deployer.address, cur_nonce);
-        }
+        nonces.insert(config.deployer.address, cur_nonce);
 
         Ok(Self {
             config,
@@ -382,7 +378,7 @@ impl GatlingShooter {
                 .transfer(
                     self.config.setup.fee_token_address,
                     self.get_random_account(),
-                    FieldElement::ONE,
+                    FieldElement::from_hex_be("0xdead").unwrap(),
                     felt!("1"),
                 )
                 .await
@@ -517,9 +513,10 @@ impl GatlingShooter {
         account: StarknetAccount,
         contract_address: FieldElement,
     ) -> Result<FieldElement> {
-        let nonce = match self.nonces.get(&contract_address) {
+        let from_address = account.address();
+        let nonce = match self.nonces.get(&from_address) {
             Some(nonce) => *nonce,
-            None => self.account.get_nonce().await?,
+            None => account.get_nonce().await?,
         };
 
         debug!(
@@ -533,7 +530,7 @@ impl GatlingShooter {
             to: contract_address,
             selector: selector!("mint"),
             calldata: vec![
-                self.get_random_account().clone().address(),
+                self.get_random_account().address(), // recipient
                 token_id_low,
                 token_id_high,
             ],
@@ -546,8 +543,7 @@ impl GatlingShooter {
             .send()
             .await?;
 
-        self.nonces
-            .insert(contract_address, nonce + FieldElement::ONE);
+        self.nonces.insert(from_address, nonce + FieldElement::ONE);
 
         Ok(result.transaction_hash)
     }
