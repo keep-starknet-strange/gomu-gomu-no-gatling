@@ -9,7 +9,6 @@ use color_eyre::{eyre::eyre, Report as EyreReport, Result};
 
 use log::{debug, error, info, warn};
 use starknet::core::types::contract::SierraClass;
-use tokio::sync::Semaphore;
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -213,31 +212,43 @@ impl GatlingShooter {
         info!("Checking transactions ...");
         let now = SystemTime::now();
 
-        let total_txs = transactions.len();
+        let total_txs = transactions.clone().len();
 
         let mut accepted_txs = Vec::new();
         let mut errors = Vec::new();
 
         // Verify transactions in parallel
-        let sem = Arc::new(Semaphore::new(95));
         let mut join_set = JoinSet::new();
+        let chunk_size = transactions.len() / 10;
+        let transactions_sets = transactions.chunks(chunk_size).map(|chunk| chunk.to_vec());
 
-        for transaction in transactions {
-            let permit = Arc::clone(&sem).acquire_owned().await;
+        for transactions_set in transactions_sets {
             let starknet_rpc = self.starknet_rpc.clone(); // Assuming `self.starknet_rpc` is cloneable
             join_set.spawn(async move {
-                let _permit = permit;
-                wait_for_tx(&starknet_rpc, transaction, CHECK_INTERVAL)
-                    .await
-                    .map(|_| transaction)
+                let mut results = Vec::new();
+                for tx in transactions_set {
+                    // Since we're now working with an owned Vec, we can move tx into the async block
+                    let res = wait_for_tx(&starknet_rpc, tx, CHECK_INTERVAL)
+                        .await
+                        .map(|_| tx);
+                    debug!("Checking Transaction {:#064x} result: {:?}", tx, res);
+                    results.push(res);
+                }
+                results
             });
         }
 
         while let Some(result) = join_set.join_next().await {
             match result {
-                Ok(Ok(tx)) => accepted_txs.push(tx),
-                Ok(Err(e)) => errors.push(e),
-                Err(e) => error!("JoinSet error: {}", e),
+                Ok(results) => {
+                    for res in results {
+                        match res {
+                            Ok(tx) => accepted_txs.push(tx),
+                            Err(e) => errors.push(e),
+                        }
+                    }
+                }
+                Err(e) => error!("JoinError {:?}", e),
             }
         }
 
