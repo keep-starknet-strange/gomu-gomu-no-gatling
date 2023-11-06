@@ -9,6 +9,7 @@ use color_eyre::{eyre::eyre, Report as EyreReport, Result};
 
 use log::{debug, error, info, warn};
 use starknet::core::types::contract::SierraClass;
+use tokio::sync::Semaphore;
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -72,7 +73,7 @@ pub struct GatlingShooter {
 
 #[derive(Clone)]
 pub struct GatlingEnvironment {
-    erc20_address: FieldElement,
+    _erc20_address: FieldElement,
     erc721_address: FieldElement,
     accounts: Vec<StarknetAccount>,
 }
@@ -161,7 +162,7 @@ impl GatlingShooter {
         let erc721_address = self.deploy_erc721(erc721_class_hash).await?;
 
         let environment = GatlingEnvironment {
-            erc20_address,
+            _erc20_address: erc20_address,
             erc721_address,
             accounts,
         };
@@ -209,11 +210,14 @@ impl GatlingShooter {
         let mut errors = Vec::new();
 
         // Verify transactions in parallel
+        let sem = Arc::new(Semaphore::new(95));
         let mut join_set = JoinSet::new();
 
         for transaction in transactions {
+            let permit = Arc::clone(&sem).acquire_owned().await;
             let starknet_rpc = self.starknet_rpc.clone(); // Assuming `self.starknet_rpc` is cloneable
             join_set.spawn(async move {
+                let _permit = permit;
                 wait_for_tx(&starknet_rpc, transaction, CHECK_INTERVAL)
                     .await
                     .map(|_| transaction)
