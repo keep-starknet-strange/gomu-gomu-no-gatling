@@ -10,9 +10,9 @@ use color_eyre::{eyre::eyre, Report as EyreReport, Result};
 use log::{debug, error, info, warn};
 use starknet::core::types::contract::SierraClass;
 
+use futures::stream::StreamExt;
 use std::collections::HashMap;
 use std::path::Path;
-use tokio::task::JoinSet;
 
 use crate::metrics::BenchmarkReport;
 
@@ -212,34 +212,36 @@ impl GatlingShooter {
         info!("Checking transactions ...");
         let now = SystemTime::now();
 
-        let total_txs = transactions.clone().len();
+        let total_txs = transactions.len();
 
         let mut accepted_txs = Vec::new();
         let mut errors = Vec::new();
 
         // Verify transactions in parallel
-        let mut join_set = JoinSet::new();
         let chunk_size = transactions.len() / 10;
         let transactions_sets = transactions.chunks(chunk_size).map(|chunk| chunk.to_vec());
 
-        for transactions_set in transactions_sets {
-            let starknet_rpc = self.starknet_rpc.clone(); // Assuming `self.starknet_rpc` is cloneable
-            join_set.spawn(async move {
+        let fetches = futures::stream::iter(transactions_sets.map(|transactions_set| {
+            // Should we clone the rpc client or is it ok to share it between threads ?
+            let starknet_rpc = self.starknet_rpc.clone();
+            tokio::spawn(async move {
                 let mut results = Vec::new();
                 for tx in transactions_set {
-                    // Since we're now working with an owned Vec, we can move tx into the async block
                     let res = wait_for_tx(&starknet_rpc, tx, CHECK_INTERVAL)
                         .await
                         .map(|_| tx);
-                    debug!("Checking Transaction {:#064x} result: {:?}", tx, res);
+                    debug!("Transaction {:#064x} result: {:?}", tx, res);
                     results.push(res);
                 }
                 results
-            });
-        }
+            })
+        }))
+        .buffer_unordered(10) // Adjust the concurrency level to the number of connections
+        .collect::<Vec<_>>();
 
-        while let Some(result) = join_set.join_next().await {
-            match result {
+        // fetches.await will resolve to a Vec<Result<Vec<Result<Transaction, Error>>, JoinError>>
+        for fetch_result in fetches.await {
+            match fetch_result {
                 Ok(results) => {
                     for res in results {
                         match res {
