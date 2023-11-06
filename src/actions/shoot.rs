@@ -85,9 +85,7 @@ impl GatlingShooter {
             signer.clone(),
             config.deployer.address,
             chain_id::TESTNET,
-            // Legacy is for cairo0 contracts, New is for cairo1
-            // Passing Legacy since we're using the 0x2 account which is cairo0
-            ExecutionEncoding::Legacy,
+            ExecutionEncoding::New,
         );
 
         // Fails if nonce is null (which is the case for 1st startup)
@@ -669,9 +667,7 @@ impl GatlingShooter {
                         signer.clone(),
                         address,
                         chain_id::TESTNET,
-                        // Legacy is for cairo0 contracts, New is for cairo1
-                        // Passing Legacy since we're using the 0x2 account which is cairo0
-                        ExecutionEncoding::Legacy,
+                        ExecutionEncoding::New,
                     );
                     deployed_accounts.push(account);
                     continue;
@@ -698,9 +694,7 @@ impl GatlingShooter {
                 signer.clone(),
                 result.contract_address,
                 chain_id::TESTNET,
-                // Legacy is for cairo0 contracts, New is for cairo1
-                // Passing Legacy since we're using the 0x2 account which is cairo0
-                ExecutionEncoding::Legacy,
+                ExecutionEncoding::New,
             );
 
             deployed_accounts.push(account);
