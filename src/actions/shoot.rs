@@ -39,7 +39,7 @@ use url::Url;
 
 // Used to bypass validation
 pub static MAX_FEE: FieldElement = felt!("0xffffffff");
-pub static CHECK_INTERVAL: Duration = Duration::from_secs(2);
+pub static CHECK_INTERVAL: Duration = Duration::from_millis(500);
 
 /// Shoot the load test simulation.
 pub async fn shoot(config: GatlingConfig) -> Result<GatlingReport> {
