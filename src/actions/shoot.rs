@@ -151,9 +151,18 @@ impl GatlingShooter {
             .declare_contract(&setup_config.account_contract)
             .await?;
 
+        let execution_encoding = match setup_config.account_contract {
+            ContractSourceConfig::V0(_) => ExecutionEncoding::Legacy,
+            ContractSourceConfig::V1(_) => ExecutionEncoding::New,
+        };
+
         let accounts = if setup_config.num_accounts > 0 {
-            self.create_accounts(account_class_hash, setup_config.num_accounts)
-                .await?
+            self.create_accounts(
+                account_class_hash,
+                setup_config.num_accounts,
+                execution_encoding,
+            )
+            .await?
         } else {
             Vec::new()
         };
@@ -259,13 +268,15 @@ impl GatlingShooter {
         info!("❤️‍🔥 FIRING ! ❤️‍🔥");
 
         let num_blocks = self.config.report.num_blocks;
+        let num_erc20_transfers = self.config.run.num_erc20_transfers;
+        let num_erc721_mints = self.config.run.num_erc721_mints;
 
         let start_block = self.starknet_rpc.block_number().await;
 
         // Run ERC20 transfer transactions
         let erc20_start_block = self.starknet_rpc.block_number().await;
 
-        let (erc20_transactions, _) = self.run_erc20().await;
+        let (erc20_transactions, _) = self.run_erc20(num_erc20_transfers).await;
 
         // Wait for the last transaction to be incorporated in a block
         wait_for_tx(
@@ -280,7 +291,7 @@ impl GatlingShooter {
         // Run ERC721 mint transactions
         let erc721_start_block = self.starknet_rpc.block_number().await;
 
-        let (erc721_transactions, _) = self.run_erc721().await;
+        let (erc721_transactions, _) = self.run_erc721(num_erc721_mints).await;
 
         // Wait for the last transaction to be incorporated in a block
         wait_for_tx(
@@ -367,17 +378,15 @@ impl GatlingShooter {
         Ok(())
     }
 
-    async fn run_erc20(&mut self) -> (Vec<FieldElement>, Vec<EyreReport>) {
-        let num_erc20_transfers = self.config.run.num_erc20_transfers;
-
-        info!("Sending {num_erc20_transfers} ERC20 transfer transactions ...");
+    async fn run_erc20(&mut self, num_transfers: u64) -> (Vec<FieldElement>, Vec<EyreReport>) {
+        info!("Sending {num_transfers} ERC20 transfer transactions ...");
 
         let start = SystemTime::now();
 
         let mut accepted_txs = Vec::new();
         let mut errors = Vec::new();
 
-        for _ in 0..num_erc20_transfers {
+        for _ in 0..num_transfers {
             match self
                 .transfer(
                     self.config.setup.fee_token_address,
@@ -401,12 +410,12 @@ impl GatlingShooter {
         info!(
             "Took {} seconds to send {} transfer transactions, on average {} sent per second",
             took,
-            num_erc20_transfers,
-            num_erc20_transfers as f32 / took
+            num_transfers,
+            num_transfers as f32 / took
         );
 
-        let accepted_ratio = accepted_txs.len() as f64 / num_erc20_transfers as f64 * 100.0;
-        let rejected_ratio = errors.len() as f64 / num_erc20_transfers as f64 * 100.0;
+        let accepted_ratio = accepted_txs.len() as f64 / num_transfers as f64 * 100.0;
+        let rejected_ratio = errors.len() as f64 / num_transfers as f64 * 100.0;
 
         info!(
             "{} transfer transactions sent successfully ({:.2}%)",
@@ -422,19 +431,17 @@ impl GatlingShooter {
         (accepted_txs, errors)
     }
 
-    async fn run_erc721<'a>(&mut self) -> (Vec<FieldElement>, Vec<EyreReport>) {
+    async fn run_erc721<'a>(&mut self, num_mints: u64) -> (Vec<FieldElement>, Vec<EyreReport>) {
         let environment = self.environment().unwrap();
 
-        let num_erc721_mints = self.config.run.num_erc721_mints;
-
-        info!("Sending {num_erc721_mints} ERC721 mint transactions ...");
+        info!("Sending {num_mints} ERC721 mint transactions ...");
 
         let start = SystemTime::now();
 
         let mut accepted_txs = Vec::new();
         let mut errors = Vec::new();
 
-        for _ in 0..num_erc721_mints {
+        for _ in 0..num_mints {
             match self
                 .mint(self.get_random_account(), environment.erc721_address)
                 .await
@@ -453,12 +460,12 @@ impl GatlingShooter {
         info!(
             "Took {} seconds to send {} mint transactions, on average {} sent per second",
             took,
-            num_erc721_mints,
-            num_erc721_mints as f32 / took
+            num_mints,
+            num_mints as f32 / took
         );
 
-        let accepted_ratio = accepted_txs.len() as f64 / num_erc721_mints as f64 * 100.0;
-        let rejected_ratio = errors.len() as f64 / num_erc721_mints as f64 * 100.0;
+        let accepted_ratio = accepted_txs.len() as f64 / num_mints as f64 * 100.0;
+        let rejected_ratio = errors.len() as f64 / num_mints as f64 * 100.0;
 
         info!(
             "{} mint transactions sent successfully ({:.2}%)",
@@ -667,6 +674,7 @@ impl GatlingShooter {
         &mut self,
         class_hash: FieldElement,
         num_accounts: usize,
+        execution_encoding: ExecutionEncoding,
     ) -> Result<Vec<StarknetAccount>> {
         info!("Creating {} accounts", num_accounts);
 
@@ -702,7 +710,7 @@ impl GatlingShooter {
                         signer.clone(),
                         address,
                         chain_id::TESTNET,
-                        ExecutionEncoding::New,
+                        execution_encoding,
                     );
                     deployed_accounts.push(account);
                     continue;
@@ -729,7 +737,7 @@ impl GatlingShooter {
                 signer.clone(),
                 result.contract_address,
                 chain_id::TESTNET,
-                ExecutionEncoding::New,
+                execution_encoding,
             );
 
             deployed_accounts.push(account);
