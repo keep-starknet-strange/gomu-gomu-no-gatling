@@ -7,11 +7,12 @@ use crate::utils::{
 use color_eyre::eyre::Context;
 use color_eyre::{eyre::eyre, Report as EyreReport, Result};
 
-use log::{debug, info, warn};
+use log::{debug, error, info, warn};
 use starknet::core::types::contract::SierraClass;
 
 use std::collections::HashMap;
 use std::path::Path;
+use tokio::task::JoinSet;
 
 use crate::metrics::BenchmarkReport;
 
@@ -41,6 +42,8 @@ use url::Url;
 pub static MAX_FEE: FieldElement = felt!("0xffffffff");
 pub static CHECK_INTERVAL: Duration = Duration::from_millis(500);
 
+type StarknetAccount = SingleOwnerAccount<Arc<JsonRpcClient<HttpTransport>>, LocalWallet>;
+
 /// Shoot the load test simulation.
 pub async fn shoot(config: GatlingConfig) -> Result<GatlingReport> {
     info!("starting simulation with config: {:#?}", config);
@@ -62,7 +65,7 @@ pub struct GatlingShooter {
     config: GatlingConfig,
     starknet_rpc: Arc<JsonRpcClient<HttpTransport>>,
     signer: LocalWallet,
-    account: SingleOwnerAccount<Arc<JsonRpcClient<HttpTransport>>, LocalWallet>,
+    account: StarknetAccount,
     nonces: HashMap<FieldElement, FieldElement>,
     environment: Option<GatlingEnvironment>, // Will be populated in setup phase
 }
@@ -71,7 +74,7 @@ pub struct GatlingShooter {
 pub struct GatlingEnvironment {
     erc20_address: FieldElement,
     erc721_address: FieldElement,
-    accounts: Vec<SingleOwnerAccount<Arc<JsonRpcClient<HttpTransport>>, LocalWallet>>,
+    accounts: Vec<StarknetAccount>,
 }
 
 impl GatlingShooter {
@@ -117,9 +120,7 @@ impl GatlingShooter {
     /// Return a random account address from the ones deployed during the setup phase
     /// or the deployer account address if no accounts were deployed or
     /// if the environment is not yet populated
-    pub fn get_random_account(
-        &self,
-    ) -> SingleOwnerAccount<Arc<JsonRpcClient<HttpTransport>>, LocalWallet> {
+    pub fn get_random_account(&self) -> StarknetAccount {
         match self.environment() {
             Ok(environment) => {
                 let mut rng = rand::thread_rng();
@@ -211,18 +212,26 @@ impl GatlingShooter {
         let mut accepted_txs = Vec::new();
         let mut errors = Vec::new();
 
+        // Verify transactions in parallel
+        let mut join_set = JoinSet::new();
+
         for transaction in transactions {
-            match wait_for_tx(&self.starknet_rpc, transaction, CHECK_INTERVAL).await {
-                Ok(_) => {
-                    accepted_txs.push(transaction);
-                    debug!("Transaction {:#064x} accepted", transaction)
-                }
-                Err(e) => {
-                    errors.push(e);
-                    debug!("Transaction {:#064x} rejected", transaction)
-                }
+            let starknet_rpc = self.starknet_rpc.clone(); // Assuming `self.starknet_rpc` is cloneable
+            join_set.spawn(async move {
+                wait_for_tx(&starknet_rpc, transaction, CHECK_INTERVAL)
+                    .await
+                    .map(|_| transaction)
+            });
+        }
+
+        while let Some(result) = join_set.join_next().await {
+            match result {
+                Ok(Ok(tx)) => accepted_txs.push(tx),
+                Ok(Err(e)) => errors.push(e),
+                Err(e) => error!("JoinSet error: {}", e),
             }
         }
+
         info!(
             "Took {} seconds to check transactions",
             now.elapsed().unwrap().as_secs_f32()
@@ -257,7 +266,14 @@ impl GatlingShooter {
         let erc20_start_block = self.starknet_rpc.block_number().await;
 
         let (erc20_transactions, _) = self.run_erc20().await;
-        self.check_transactions(erc20_transactions).await;
+
+        // Wait for the last transaction to be incorporated in a block
+        wait_for_tx(
+            &self.starknet_rpc,
+            *erc20_transactions.last().unwrap(),
+            CHECK_INTERVAL,
+        )
+        .await?;
 
         let erc20_end_block = self.starknet_rpc.block_number().await;
 
@@ -265,7 +281,14 @@ impl GatlingShooter {
         let erc721_start_block = self.starknet_rpc.block_number().await;
 
         let (erc721_transactions, _) = self.run_erc721().await;
-        self.check_transactions(erc721_transactions).await;
+
+        // Wait for the last transaction to be incorporated in a block
+        wait_for_tx(
+            &self.starknet_rpc,
+            *erc721_transactions.last().unwrap(),
+            CHECK_INTERVAL,
+        )
+        .await?;
 
         let erc721_end_block = self.starknet_rpc.block_number().await;
 
@@ -337,12 +360,14 @@ impl GatlingShooter {
             .await?;
         }
 
+        // Check transactions
+        self.check_transactions([erc20_transactions, erc721_transactions].concat())
+            .await;
+
         Ok(())
     }
 
     async fn run_erc20(&mut self) -> (Vec<FieldElement>, Vec<EyreReport>) {
-        let environment = self.environment().unwrap();
-
         let num_erc20_transfers = self.config.run.num_erc20_transfers;
 
         info!("Sending {num_erc20_transfers} ERC20 transfer transactions ...");
@@ -355,9 +380,9 @@ impl GatlingShooter {
         for _ in 0..num_erc20_transfers {
             match self
                 .transfer(
-                    environment.erc20_address,
+                    self.config.setup.fee_token_address,
                     self.get_random_account(),
-                    FieldElement::ZERO,
+                    FieldElement::ONE,
                     felt!("1"),
                 )
                 .await
@@ -452,7 +477,7 @@ impl GatlingShooter {
     async fn transfer(
         &mut self,
         contract_address: FieldElement,
-        account: SingleOwnerAccount<Arc<JsonRpcClient<HttpTransport>>, LocalWallet>,
+        account: StarknetAccount,
         recipient: FieldElement,
         amount: FieldElement,
     ) -> Result<FieldElement> {
@@ -489,7 +514,7 @@ impl GatlingShooter {
 
     async fn mint(
         &mut self,
-        account: SingleOwnerAccount<Arc<JsonRpcClient<HttpTransport>>, LocalWallet>,
+        account: StarknetAccount,
         contract_address: FieldElement,
     ) -> Result<FieldElement> {
         let nonce = match self.nonces.get(&contract_address) {
@@ -529,7 +554,11 @@ impl GatlingShooter {
 
     async fn deploy_erc721(&mut self, class_hash: FieldElement) -> Result<FieldElement> {
         let contract_factory = ContractFactory::new(class_hash, self.account.clone());
-        let nonce = self.account.get_nonce().await?;
+        let from_address = self.account.address();
+        let nonce = match self.nonces.get(&from_address) {
+            Some(nonce) => *nonce,
+            None => self.account.get_nonce().await?,
+        };
 
         let name = selector!("TestNFT");
         let symbol = selector!("TNFT");
@@ -561,6 +590,8 @@ impl GatlingShooter {
         let result = deploy.nonce(nonce).max_fee(MAX_FEE).send().await?;
         wait_for_tx(&self.starknet_rpc, result.transaction_hash, CHECK_INTERVAL).await?;
 
+        self.nonces.insert(from_address, nonce + FieldElement::ONE);
+
         debug!(
             "Deploy ERC721 transaction accepted {:#064x}",
             result.transaction_hash
@@ -572,7 +603,11 @@ impl GatlingShooter {
 
     async fn deploy_erc20(&mut self, class_hash: FieldElement) -> Result<FieldElement> {
         let contract_factory = ContractFactory::new(class_hash, self.account.clone());
-        let nonce = self.account.get_nonce().await?;
+        let from_address = self.account.address();
+        let nonce = match self.nonces.get(&from_address) {
+            Some(nonce) => *nonce,
+            None => self.account.get_nonce().await?,
+        };
 
         let name = selector!("TestToken");
         let symbol = selector!("TT");
@@ -616,6 +651,8 @@ impl GatlingShooter {
         let result = deploy.nonce(nonce).max_fee(MAX_FEE).send().await?;
         wait_for_tx(&self.starknet_rpc, result.transaction_hash, CHECK_INTERVAL).await?;
 
+        self.nonces.insert(from_address, nonce + FieldElement::ONE);
+
         debug!(
             "Deploy ERC20 transaction accepted {:#064x}",
             result.transaction_hash
@@ -630,12 +667,10 @@ impl GatlingShooter {
         &mut self,
         class_hash: FieldElement,
         num_accounts: usize,
-    ) -> Result<Vec<SingleOwnerAccount<Arc<JsonRpcClient<HttpTransport>>, LocalWallet>>> {
+    ) -> Result<Vec<StarknetAccount>> {
         info!("Creating {} accounts", num_accounts);
 
-        let mut deployed_accounts: Vec<
-            SingleOwnerAccount<Arc<JsonRpcClient<HttpTransport>>, LocalWallet>,
-        > = Vec::with_capacity(num_accounts);
+        let mut deployed_accounts: Vec<StarknetAccount> = Vec::with_capacity(num_accounts);
 
         for i in 0..num_accounts {
             self.account.set_block_id(BlockId::Tag(BlockTag::Pending));
@@ -682,7 +717,7 @@ impl GatlingShooter {
                     fee_token_address,
                     self.account.clone(),
                     address,
-                    felt!("0xffffffffff"),
+                    felt!("0xFFFFFFFFF"),
                 )
                 .await?;
             wait_for_tx(&self.starknet_rpc, tx_hash, CHECK_INTERVAL).await?;
@@ -724,6 +759,7 @@ impl GatlingShooter {
             Err(err) => Err(eyre!(err)),
         }
     }
+
     async fn declare_contract_legacy<'a>(
         &mut self,
         contract_path: impl AsRef<Path>,
@@ -741,7 +777,11 @@ impl GatlingShooter {
         }
 
         self.account.set_block_id(BlockId::Tag(BlockTag::Pending));
-        let nonce = self.account.get_nonce().await?;
+        let from_address = self.account.address();
+        let nonce = match self.nonces.get(&from_address) {
+            Some(nonce) => *nonce,
+            None => self.account.get_nonce().await?,
+        };
 
         let tx_resp = self
             .account
@@ -752,10 +792,15 @@ impl GatlingShooter {
             .await
             .wrap_err("Could not declare contract")?;
 
+        wait_for_tx(&self.starknet_rpc, tx_resp.transaction_hash, CHECK_INTERVAL).await?;
+
+        self.nonces.insert(from_address, nonce + FieldElement::ONE);
+
         info!(
             "Contract declared successfully at {:#064x}",
             tx_resp.class_hash
         );
+
         Ok(tx_resp.class_hash)
     }
 
@@ -764,15 +809,21 @@ impl GatlingShooter {
         contract_path: impl AsRef<Path>,
         casm_class_hash: FieldElement,
     ) -> Result<FieldElement> {
-        // Sierra class artifact. Output of the `starknet-compile` command
-        info!(
-            "Declaring contract from path {}",
-            contract_path.as_ref().display()
-        );
-        let file = std::fs::File::open(contract_path)?;
+        let file = std::fs::File::open(contract_path.as_ref())?;
         let contract_artifact: SierraClass = serde_json::from_reader(file)?;
         let class_hash = contract_artifact.class_hash()?;
-        let nonce = self.account.get_nonce().await?;
+
+        // Sierra class artifact. Output of the `starknet-compile` command
+        info!(
+            "Declaring contract v1 from path {} with class hash {:#064x}",
+            contract_path.as_ref().display(),
+            class_hash
+        );
+        let from_address = self.account.address();
+        let nonce = match self.nonces.get(&from_address) {
+            Some(nonce) => *nonce,
+            None => self.account.get_nonce().await?,
+        };
 
         if self.check_already_declared(class_hash).await? {
             return Ok(class_hash);
@@ -794,10 +845,15 @@ impl GatlingShooter {
             .await
             .wrap_err("Could not declare contract")?;
 
+        wait_for_tx(&self.starknet_rpc, tx_resp.transaction_hash, CHECK_INTERVAL).await?;
+
         info!(
             "Contract declared successfully at {:#064x}",
             tx_resp.class_hash
         );
+
+        self.nonces.insert(from_address, nonce + FieldElement::ONE);
+
         Ok(tx_resp.class_hash)
     }
 
