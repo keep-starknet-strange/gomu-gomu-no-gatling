@@ -41,6 +41,7 @@ use url::Url;
 // Used to bypass validation
 pub static MAX_FEE: FieldElement = felt!("0xffffffff");
 pub static CHECK_INTERVAL: Duration = Duration::from_millis(500);
+pub static TX_VALIDATION_CHUNKS: usize = 10;
 
 type StarknetAccount = SingleOwnerAccount<Arc<JsonRpcClient<HttpTransport>>, LocalWallet>;
 
@@ -218,7 +219,7 @@ impl GatlingShooter {
         let mut errors = Vec::new();
 
         // Verify transactions in parallel
-        let chunk_size = transactions.len() / 10;
+        let chunk_size = transactions.len() / TX_VALIDATION_CHUNKS;
         let transactions_sets = transactions.chunks(chunk_size).map(|chunk| chunk.to_vec());
 
         let fetches = futures::stream::iter(transactions_sets.map(|transactions_set| {
@@ -236,7 +237,7 @@ impl GatlingShooter {
                 results
             })
         }))
-        .buffer_unordered(10) // Adjust the concurrency level to the number of connections
+        .buffer_unordered(TX_VALIDATION_CHUNKS) // Adjust the concurrency level to the number of connections
         .collect::<Vec<_>>();
 
         // fetches.await will resolve to a Vec<Result<Vec<Result<Transaction, Error>>, JoinError>>
