@@ -18,7 +18,7 @@ use starknet::{
 use std::time::Duration;
 use sysinfo::{CpuExt, System, SystemExt};
 
-use crate::actions::shoot::GatlingReport;
+use crate::actions::shoot::{GatlingReport, CHECK_INTERVAL};
 use crate::metrics::BenchmarkReport;
 
 lazy_static! {
@@ -106,8 +106,7 @@ impl fmt::Display for SysInfo {
     }
 }
 
-const WAIT_FOR_TX_TIMEOUT: Duration = Duration::from_secs(10);
-const WAIT_FOR_TX_SLEEP: Duration = Duration::from_millis(100);
+const WAIT_FOR_TX_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub async fn wait_for_tx(
     provider: &JsonRpcClient<HttpTransport>,
@@ -143,14 +142,14 @@ pub async fn wait_for_tx(
             }
             Ok(PendingReceipt(_)) => {
                 debug!("Waiting for transaction {tx_hash:#064x} to be accepted");
-                tokio::time::sleep(WAIT_FOR_TX_SLEEP).await;
+                tokio::time::sleep(check_interval).await;
             }
             Err(ProviderError::StarknetError(StarknetErrorWithMessage {
                 code: MaybeUnknownErrorCode::Known(StarknetError::TransactionHashNotFound),
                 ..
             })) => {
                 debug!("Waiting for transaction {tx_hash:#064x} to show up");
-                tokio::time::sleep(WAIT_FOR_TX_SLEEP).await;
+                tokio::time::sleep(CHECK_INTERVAL).await;
             }
             Err(err) => {
                 return Err(eyre!(err).wrap_err(format!(
@@ -158,8 +157,6 @@ pub async fn wait_for_tx(
                 )))
             }
         }
-
-        tokio::time::sleep(check_interval).await;
     }
 }
 
