@@ -52,26 +52,29 @@ You can find example configurations under the [config](./config) folder.
 The configuration is defined by the following spec
 
 - `rpc`
+
   - `url`: Starknet RPC url, should be compliant with the specification
 
 - `setup`
 
 > `v0` and `v1` CAN'T be specified at the same time
 
-  - `erc20_contract`: ERC20 contract used to benchmark transfers
-    - `v0`: Path to Cairo Zero contract artifact
-    - `v1`: 
-      - `path`: Path to Cairo contract sierra artifact
-      - `casm_path`: Path to Cairo contract casm artifact
+- `erc20_contract`: ERC20 contract used to benchmark transfers
 
-    - `erc721_contract`: ERC721 contract used to benchmark mints
-      ...
+  - `v0`: Path to Cairo Zero contract artifact
+  - `v1`:
 
-    - `account_contract`: Account contract used to send transactions
-      ...
+    - `path`: Path to Cairo contract sierra artifact
+    - `casm_path`: Path to Cairo contract casm artifact
 
-    - `fee_token_address`: Contract address of the fee token on the target chain
-    - `num_accounts`: Number of accounts sending transactions
+  - `erc721_contract`: ERC721 contract used to benchmark mints
+    ...
+
+  - `account_contract`: Account contract used to send transactions
+    ...
+
+  - `fee_token_address`: Contract address of the fee token on the target chain
+  - `num_accounts`: Number of accounts sending transactions
 
 - `run`
 
@@ -89,8 +92,6 @@ The configuration is defined by the following spec
   - `address`: Address of the deployer account (should be pre-funded)
   - `signing_key`: Private key of the deployer signer
 
-    
-
 ### Run a load test
 
 ```bash
@@ -100,7 +101,5 @@ gatling shoot -c config/default.yaml
 ## Ressources
 
 - Gomu Gomu is originally inspired from [Flood](https://github.com/paradigmxyz/flood)
-- (Aptos load-testing tool)[https://github.com/aptos-labs/aptos-multi-region-bench] 
+- (Aptos load-testing tool)[https://github.com/aptos-labs/aptos-multi-region-bench]
 - (Starknet RPC specs)[https://github.com/starkware-libs/starknet-specs/blob/master/api/starknet_api_openrpc.json]
-
-
