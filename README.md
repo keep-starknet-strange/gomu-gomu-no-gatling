@@ -33,7 +33,7 @@ cargo install --locked gatling
 ### Run debug
 
 ```bash
-RUST_LOG=info cargo run -- shoot -c config/rinnegan.yaml
+RUST_LOG=debug cargo run -- shoot -c config/default.yaml
 ```
 
 ## Usage
@@ -44,10 +44,63 @@ gatling --help
 
 ### Configuration
 
-> **TODO**: Add configuration options.
+Gomu gomu's configuration is specified as a yaml file.
+You can find example configurations under the [config](./config) folder.
+
+> As it uses the `config` crate under the hood, the configuration could be specified as any other file type such as TOML or JSON.
+
+The configuration is defined by the following spec
+
+- `rpc`
+  - `url`: Starknet RPC url, should be compliant with the specification
+
+- `setup`
+
+> `v0` and `v1` CAN'T be specified at the same time
+
+  - `erc20_contract`: ERC20 contract used to benchmark transfers
+    - `v0`: Path to Cairo Zero contract artifact
+    - `v1`: 
+      - `path`: Path to Cairo contract sierra artifact
+      - `casm_path`: Path to Cairo contract casm artifact
+
+    - `erc721_contract`: ERC721 contract used to benchmark mints
+      ...
+
+    - `account_contract`: Account contract used to send transactions
+      ...
+
+    - `fee_token_address`: Contract address of the fee token on the target chain
+    - `num_accounts`: Number of accounts sending transactions
+
+- `run`
+
+  - `num_erc20_transfers`: Number of ERC20 `transfer` transactions
+  - `num_erc721_mints`: Number of ERC721 `mint` transactions
+
+- `report`
+
+  - `num_blocks`: Number of last blocks to take into account in the report
+  - `reports_dir`: Path to the directory where to save the reports
+
+- `deployer`
+
+  - `salt`: Salt used to compute deployment addresses
+  - `address`: Address of the deployer account (should be pre-funded)
+  - `signing_key`: Private key of the deployer signer
+
+    
 
 ### Run a load test
 
 ```bash
-gatling shoot -c config/rinnegan.yaml
+gatling shoot -c config/default.yaml
 ```
+
+## Ressources
+
+- Gomu Gomu is originally inspired from [Flood](https://github.com/paradigmxyz/flood)
+- (Aptos load-testing tool)[https://github.com/aptos-labs/aptos-multi-region-bench] 
+- (Starknet RPC specs)[https://github.com/starkware-libs/starknet-specs/blob/master/api/starknet_api_openrpc.json]
+
+
