@@ -23,6 +23,7 @@ setup:
 run:
   num_erc20_transfers: 100
   num_erc721_mints: 100
+  concurrency: 5
 
 report:
   num_blocks: 3

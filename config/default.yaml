@@ -15,8 +15,9 @@ setup:
   num_accounts: 3
 
 run:
-  num_erc20_transfers: 1200
-  num_erc721_mints: 1200
+  num_erc20_transfers: 300
+  num_erc721_mints: 300
+  concurrency: 5
 
 report:
   num_blocks: 4
