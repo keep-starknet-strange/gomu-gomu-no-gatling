@@ -5,8 +5,12 @@ use std::path::PathBuf;
 use color_eyre::eyre::Result;
 use config::{builder::DefaultState, Config, ConfigBuilder, File};
 
-use serde_derive::Deserialize;
-use starknet::core::types::{contract::CompiledClass, FieldElement};
+use serde::de::Error as DeError;
+use serde::Deserialize;
+use starknet::core::{
+    types::{contract::CompiledClass, FieldElement},
+    utils::{cairo_short_string_to_felt, CairoShortStringToFeltError},
+};
 
 /// Configuration for the application.
 #[derive(Debug, Deserialize, Clone)]
@@ -86,6 +90,8 @@ pub struct SetupConfig {
     pub account_contract: ContractSourceConfig,
     pub fee_token_address: FieldElement,
     pub num_accounts: usize,
+    #[serde(deserialize_with = "from_str_deserializer")]
+    pub chain_id: FieldElement,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -134,4 +140,19 @@ fn base_config_builder() -> ConfigBuilder<DefaultState> {
         // Add in settings from the environment (with a prefix of GATLING)
         // Eg.. `GATLING_FAIL_FAST=1 ./target/app` would set the `fail_fast` key
         .add_source(config::Environment::with_prefix("gatling"))
+}
+
+fn from_str_deserializer<'de, D>(deserializer: D) -> Result<FieldElement, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    // Deserialize a string using the deserializer.
+    let s = String::deserialize(deserializer)?;
+
+    // Use your custom function to try to create a FieldElement from the string.
+    // If there's an error, use the Error::custom method to convert it into a Serde error.
+    cairo_short_string_to_felt(&s).map_err(|e| match e {
+        CairoShortStringToFeltError::NonAsciiCharacter => D::Error::custom("non ascii character"),
+        CairoShortStringToFeltError::StringTooLong => D::Error::custom("string too long"),
+    })
 }

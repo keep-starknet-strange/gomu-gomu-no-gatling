@@ -23,7 +23,6 @@ use starknet::accounts::{
     SingleOwnerAccount,
 };
 use starknet::contract::ContractFactory;
-use starknet::core::chain_id;
 use starknet::core::types::{
     contract::legacy::LegacyContractClass, BlockId, BlockTag, FieldElement, StarknetError,
 };
@@ -39,7 +38,7 @@ use std::time::{Duration, SystemTime};
 use url::Url;
 
 // Used to bypass validation
-pub static MAX_FEE: FieldElement = felt!("0xffffffff");
+pub static MAX_FEE: FieldElement = felt!("0x515100000000000");
 pub static CHECK_INTERVAL: Duration = Duration::from_millis(500);
 
 type StarknetAccount = SingleOwnerAccount<Arc<JsonRpcClient<HttpTransport>>, LocalWallet>;
@@ -91,7 +90,7 @@ impl GatlingShooter {
             starknet_rpc.clone(),
             signer.clone(),
             config.deployer.address,
-            chain_id::TESTNET,
+            config.setup.chain_id,
             ExecutionEncoding::New,
         );
 
@@ -721,9 +720,13 @@ impl GatlingShooter {
             // TODO: Check if OpenZepplinAccountFactory could be used with other type of accounts ? or should we require users to use OpenZepplinAccountFactory ?
             let signer = self.signer.clone();
             let provider = self.starknet_rpc.clone();
-            let account_factory =
-                OpenZeppelinAccountFactory::new(class_hash, chain_id::TESTNET, &signer, &provider)
-                    .await?;
+            let account_factory = OpenZeppelinAccountFactory::new(
+                class_hash,
+                self.config.setup.chain_id,
+                &signer,
+                &provider,
+            )
+            .await?;
 
             let salt = self.config.deployer.salt + FieldElement::from(i);
 
@@ -742,7 +745,7 @@ impl GatlingShooter {
                         self.starknet_rpc.clone(),
                         signer.clone(),
                         address,
-                        chain_id::TESTNET,
+                        self.config.setup.chain_id,
                         execution_encoding,
                     );
                     deployed_accounts.push(account);
@@ -773,7 +776,7 @@ impl GatlingShooter {
                 self.starknet_rpc.clone(),
                 signer.clone(),
                 result.contract_address,
-                chain_id::TESTNET,
+                self.config.setup.chain_id,
                 execution_encoding,
             );
 
