@@ -98,7 +98,7 @@ The configuration is defined by the following spec
 gatling shoot -c config/default.yaml
 ```
 
-## Ressources
+## Resources
 
 - Gomu Gomu is originally inspired from [Flood](https://github.com/paradigmxyz/flood)
 - (Aptos load-testing tool)[https://github.com/aptos-labs/aptos-multi-region-bench]
