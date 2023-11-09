@@ -1,0 +1,79 @@
+{
+    "projectName": "gomu-gomu-no-gatling",
+    "projectOwner": "keep-starknet-strange",
+    "repoType": "github",
+    "repoHost": "https://github.com",
+    "files": [
+        "README.md"
+    ],
+    "imageSize": 100,
+    "commit": true,
+    "commitConvention": "gitmoji",
+    "contributors": [
+        {
+            "login": "abdelhamidbakhta",
+            "name": "Abdel @ StarkWare ",
+            "avatar_url": "https://avatars.githubusercontent.com/u/45264458?v=4",
+            "profile": "https://github.com/abdelhamidbakhta",
+            "contributions": [
+                "code"
+            ]
+        },
+        {
+            "login": "EvolveArt",
+            "name": "0xevolve",
+            "avatar_url": "https://avatars.githubusercontent.com/u/12902455?v=4",
+            "profile": "https://github.com/EvolveArt",
+            "contributions": [
+                "code"
+            ]
+        },
+        {
+            "login": "d-roak",
+            "name": "Oak",
+            "avatar_url": "https://avatars.githubusercontent.com/u/5263301?v=4",
+            "profile": "https://droak.sh/",
+            "contributions": [
+                "code"
+            ]
+        },
+        {
+            "login": "drspacemn",
+            "name": "drspacemn",
+            "avatar_url": "https://avatars.githubusercontent.com/u/16685321?v=4",
+            "profile": "https://github.com/drspacemn",
+            "contributions": [
+                "code"
+            ]
+        },
+        {
+            "login": "haroune-mohammedi",
+            "name": "Haroune | Quadratic",
+            "avatar_url": "https://avatars.githubusercontent.com/u/118889688?v=4",
+            "profile": "https://github.com/haroune-mohammedi",
+            "contributions": [
+                "code"
+            ]
+        },
+        {
+            "login": "dbejarano820",
+            "name": "Daniel Bejarano",
+            "avatar_url": "https://avatars.githubusercontent.com/u/58019353?v=4",
+            "profile": "https://github.com/dbejarano820",
+            "contributions": [
+                "code"
+            ]
+        },
+        {
+            "login": "nicbaz",
+            "name": "nbz",
+            "avatar_url": "https://avatars.githubusercontent.com/u/932244?v=4",
+            "profile": "https://github.com/nicbaz",
+            "contributions": [
+                "code"
+            ]
+        }
+    ],
+    "contributorsPerLine": 7,
+    "linkToUsage": false
+}

@@ -103,3 +103,27 @@ gatling shoot -c config/default.yaml
 - Gomu Gomu is originally inspired from [Flood](https://github.com/paradigmxyz/flood)
 - (Aptos load-testing tool)[https://github.com/aptos-labs/aptos-multi-region-bench]
 - (Starknet RPC specs)[https://github.com/starkware-libs/starknet-specs/blob/master/api/starknet_api_openrpc.json]
+
+## Contributors
+
+<!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
+<!-- prettier-ignore-start -->
+<!-- markdownlint-disable -->
+<table>
+  <tbody>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/abdelhamidbakhta"><img src="https://avatars.githubusercontent.com/u/45264458?v=4?s=100" width="100px;" alt="Abdel @ StarkWare "/><br /><sub><b>Abdel @ StarkWare </b></sub></a><br /><a href="https://github.com/keep-starknet-strange/gomu-gomu-no-gatling/commits?author=abdelhamidbakhta" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/EvolveArt"><img src="https://avatars.githubusercontent.com/u/12902455?v=4?s=100" width="100px;" alt="0xevolve"/><br /><sub><b>0xevolve</b></sub></a><br /><a href="https://github.com/keep-starknet-strange/gomu-gomu-no-gatling/commits?author=EvolveArt" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://droak.sh/"><img src="https://avatars.githubusercontent.com/u/5263301?v=4?s=100" width="100px;" alt="Oak"/><br /><sub><b>Oak</b></sub></a><br /><a href="https://github.com/keep-starknet-strange/gomu-gomu-no-gatling/commits?author=d-roak" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/drspacemn"><img src="https://avatars.githubusercontent.com/u/16685321?v=4?s=100" width="100px;" alt="drspacemn"/><br /><sub><b>drspacemn</b></sub></a><br /><a href="https://github.com/keep-starknet-strange/gomu-gomu-no-gatling/commits?author=drspacemn" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/haroune-mohammedi"><img src="https://avatars.githubusercontent.com/u/118889688?v=4?s=100" width="100px;" alt="Haroune &#124; Quadratic"/><br /><sub><b>Haroune &#124; Quadratic</b></sub></a><br /><a href="https://github.com/keep-starknet-strange/gomu-gomu-no-gatling/commits?author=haroune-mohammedi" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/dbejarano820"><img src="https://avatars.githubusercontent.com/u/58019353?v=4?s=100" width="100px;" alt="Daniel Bejarano"/><br /><sub><b>Daniel Bejarano</b></sub></a><br /><a href="https://github.com/keep-starknet-strange/gomu-gomu-no-gatling/commits?author=dbejarano820" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/nicbaz"><img src="https://avatars.githubusercontent.com/u/932244?v=4?s=100" width="100px;" alt="nbz"/><br /><sub><b>nbz</b></sub></a><br /><a href="https://github.com/keep-starknet-strange/gomu-gomu-no-gatling/commits?author=nicbaz" title="Code">💻</a></td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- markdownlint-restore -->
+<!-- prettier-ignore-end -->
+
+<!-- ALL-CONTRIBUTORS-LIST:END -->
