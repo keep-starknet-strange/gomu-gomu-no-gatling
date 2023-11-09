@@ -671,8 +671,8 @@ impl GatlingShooter {
         let deploy = contract_factory.deploy(constructor_args, self.config.deployer.salt, unique);
 
         info!(
-            "Deploying ERC20 contract with nonce={}, address={address}",
-            nonce
+            "Deploying ERC20 contract with nonce={}, address={:#064x}",
+            nonce, address
         );
 
         let result = deploy.nonce(nonce).max_fee(MAX_FEE).send().await?;
