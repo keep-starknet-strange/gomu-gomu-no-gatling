@@ -282,112 +282,102 @@ impl GatlingShooter {
         info!("❤️‍🔥 FIRING ! ❤️‍🔥");
 
         let num_blocks = self.config.report.num_blocks;
+        let start_block = self.starknet_rpc.block_number().await?;
+        let mut transactions = Vec::new();
+
         let num_erc20_transfers = self.config.run.num_erc20_transfers;
+
+        let erc20_blocks = if num_erc20_transfers > 0 {
+            // Run ERC20 transfer transactions
+            let start_block = self.starknet_rpc.block_number().await?;
+
+            let (mut transacs, _) = self.run_erc20(num_erc20_transfers).await;
+
+            // Wait for the last transaction to be incorporated in a block
+            wait_for_tx(
+                &self.starknet_rpc,
+                *transacs.last().unwrap(),
+                CHECK_INTERVAL,
+            )
+            .await?;
+
+            let end_block = self.starknet_rpc.block_number().await?;
+
+            transactions.append(&mut transacs);
+
+            Ok((start_block, end_block))
+        } else {
+            Err("0 ERC20 transfers to make")
+        };
+
         let num_erc721_mints = self.config.run.num_erc721_mints;
 
-        let start_block = self.starknet_rpc.block_number().await;
+        let erc721_blocks = if num_erc721_mints > 0 {
+            // Run ERC721 mint transactions
+            let start_block = self.starknet_rpc.block_number().await?;
 
-        // Run ERC20 transfer transactions
-        let erc20_start_block = self.starknet_rpc.block_number().await;
+            let (mut transacs, _) = self.run_erc721(num_erc721_mints).await;
 
-        let (erc20_transactions, _) = self.run_erc20(num_erc20_transfers).await;
+            // Wait for the last transaction to be incorporated in a block
+            wait_for_tx(
+                &self.starknet_rpc,
+                *transacs.last().unwrap(),
+                CHECK_INTERVAL,
+            )
+            .await?;
 
-        // Wait for the last transaction to be incorporated in a block
-        wait_for_tx(
-            &self.starknet_rpc,
-            *erc20_transactions.last().unwrap(),
-            CHECK_INTERVAL,
-        )
-        .await?;
+            let end_block = self.starknet_rpc.block_number().await?;
 
-        let erc20_end_block = self.starknet_rpc.block_number().await;
+            transactions.append(&mut transacs);
 
-        // Run ERC721 mint transactions
-        let erc721_start_block = self.starknet_rpc.block_number().await;
+            Ok((start_block, end_block))
+        } else {
+            Err("0 ERC721 mints to make")
+        };
 
-        let (erc721_transactions, _) = self.run_erc721(num_erc721_mints).await;
+        let end_block = self.starknet_rpc.block_number().await?;
 
-        // Wait for the last transaction to be incorporated in a block
-        wait_for_tx(
-            &self.starknet_rpc,
-            *erc721_transactions.last().unwrap(),
-            CHECK_INTERVAL,
-        )
-        .await?;
-
-        let erc721_end_block = self.starknet_rpc.block_number().await;
-
-        let end_block = self.starknet_rpc.block_number().await;
+        let full_blocks = if start_block < end_block {
+            Ok((start_block, end_block))
+        } else {
+            Err("no executions were made")
+        };
 
         // Build benchmark reports
+        for (token, blocks) in [
+            ("ERC20", erc20_blocks),
+            ("ERC721", erc721_blocks),
+            ("Full", full_blocks),
+        ] {
+            match blocks {
+                Ok((start_block, end_block)) => {
+                    // The transactions we sent will be incorporated in the next accepted block
+                    build_benchmark_report(
+                        self.starknet_rpc.clone(),
+                        token.to_string(),
+                        BenchmarkType::BlockRange(start_block + 1, end_block),
+                        gatling_report,
+                    )
+                    .await?;
 
-        if let Err(err) = erc20_start_block.as_ref().and(erc20_end_block.as_ref()) {
-            warn!(
-            "Skip creating ERC20 reports, failed to get current block number because of `{err}`"
-        );
-        } else {
-            // The transactions we sent will be incorporated in the next accepted block
-            build_benchmark_report(
-                self.starknet_rpc.clone(),
-                "ERC20".to_string(),
-                BenchmarkType::BlockRange(erc20_start_block.unwrap() + 1, erc20_end_block.unwrap()),
-                gatling_report,
-            )
-            .await?;
-
-            build_benchmark_report(
-                self.starknet_rpc.clone(),
-                format!("ERC20_latest_{num_blocks}").to_string(),
-                BenchmarkType::LatestBlocks(num_blocks),
-                gatling_report,
-            )
-            .await?;
-        }
-
-        if let Err(err) = erc721_start_block.as_ref().and(erc721_end_block.as_ref()) {
-            warn!(
-            "Skip creating ERC721 reports, failed to get current block number because of `{err}`"
-        );
-        } else {
-            // The transactions we sent will be incorporated in the next accepted block
-            build_benchmark_report(
-                self.starknet_rpc.clone(),
-                "ERC721".to_string(),
-                BenchmarkType::BlockRange(
-                    erc721_start_block.unwrap() + 1,
-                    erc721_end_block.unwrap(),
-                ),
-                gatling_report,
-            )
-            .await?;
-
-            build_benchmark_report(
-                self.starknet_rpc.clone(),
-                format!("ERC721_latest_{num_blocks}").to_string(),
-                BenchmarkType::LatestBlocks(num_blocks),
-                gatling_report,
-            )
-            .await?;
-        }
-
-        if let Err(err) = start_block.as_ref().and(end_block.as_ref()) {
-            warn!(
-            "Skip creating ERC20 reports, failed to get current block number because of `{err}`"
-        );
-        } else {
-            // The transactions we sent will be incorporated in the next accepted block
-            build_benchmark_report(
-                self.starknet_rpc.clone(),
-                "Full".to_string(),
-                BenchmarkType::BlockRange(start_block.unwrap() + 1, end_block.unwrap()),
-                gatling_report,
-            )
-            .await?;
+                    build_benchmark_report(
+                        self.starknet_rpc.clone(),
+                        format!("{token}_latest_{num_blocks}").to_string(),
+                        BenchmarkType::LatestBlocks(num_blocks),
+                        gatling_report,
+                    )
+                    .await?;
+                }
+                Err(err) => warn!("Skip creating {token} reports because of `{err}`"),
+            };
         }
 
         // Check transactions
-        self.check_transactions([erc20_transactions, erc721_transactions].concat())
-            .await;
+        if !transactions.is_empty() {
+            self.check_transactions(transactions).await;
+        } else {
+            warn!("No load test was executed, are both mints and transfers set to 0?");
+        }
 
         Ok(())
     }
