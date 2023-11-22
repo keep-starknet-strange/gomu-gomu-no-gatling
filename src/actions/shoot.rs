@@ -7,10 +7,9 @@ use crate::utils::{
 use color_eyre::eyre::Context;
 use color_eyre::{eyre::eyre, Report as EyreReport, Result};
 
-use log::{debug, error, info, warn};
+use log::{debug, info, warn};
 use starknet::core::types::contract::SierraClass;
 
-use futures::stream::StreamExt;
 use std::collections::HashMap;
 use std::path::Path;
 use tokio::task::JoinSet;
@@ -226,15 +225,24 @@ impl GatlingShooter {
         for _ in 0..TX_VALIDATION_CONCURRENCY {
             if let Some(transaction) = transactions.next() {
                 let starknet_rpc = Arc::clone(&self.starknet_rpc);
-                set.spawn(async move { wait_for_tx(&starknet_rpc, transaction, CHECK_INTERVAL).await.map(|_| transaction).map_err(|err| (err, transaction)) });
+                set.spawn(async move {
+                    wait_for_tx(&starknet_rpc, transaction, CHECK_INTERVAL)
+                        .await
+                        .map(|_| transaction)
+                        .map_err(|err| (err, transaction))
+                });
             }
-
         }
 
         while let Some(res) = set.join_next().await {
             if let Some(transaction) = transactions.next() {
                 let starknet_rpc = Arc::clone(&self.starknet_rpc);
-                set.spawn(async move { wait_for_tx(&starknet_rpc, transaction, CHECK_INTERVAL).await.map(|_| transaction).map_err(|err| (err, transaction)) });
+                set.spawn(async move {
+                    wait_for_tx(&starknet_rpc, transaction, CHECK_INTERVAL)
+                        .await
+                        .map(|_| transaction)
+                        .map_err(|err| (err, transaction))
+                });
             }
 
             match res.unwrap() {
