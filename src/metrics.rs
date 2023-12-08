@@ -25,7 +25,7 @@ pub struct Metric {
     pub compute: fn(&[u64]) -> f64,
 }
 
-/// A struct that contains the result of a metric computation alognside the name and unit
+/// A struct that contains the result of a metric computation alongside the name and unit
 /// This struct is used for displaying the metric result
 /// Example:
 /// MetricResult { name: "Average TPS", unit: "transactions/second", value: 1000 }
