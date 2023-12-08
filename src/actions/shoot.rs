@@ -23,7 +23,6 @@ use starknet::accounts::{
     SingleOwnerAccount,
 };
 use starknet::contract::ContractFactory;
-use starknet::core::chain_id;
 use starknet::core::types::{
     contract::legacy::LegacyContractClass, BlockId, BlockTag, FieldElement, StarknetError,
 };
@@ -39,19 +38,21 @@ use std::time::{Duration, SystemTime};
 use url::Url;
 
 // Used to bypass validation
-pub static MAX_FEE: FieldElement = felt!("0xffffffff");
+pub static MAX_FEE: FieldElement = felt!("0xffffff");
 pub static CHECK_INTERVAL: Duration = Duration::from_millis(500);
-pub static TX_VALIDATION_CONCURRENCY: usize = 10;
 
 type StarknetAccount = SingleOwnerAccount<Arc<JsonRpcClient<HttpTransport>>, LocalWallet>;
 
 /// Shoot the load test simulation.
 pub async fn shoot(config: GatlingConfig) -> Result<GatlingReport> {
     info!("starting simulation with config: {:#?}", config);
-    let mut shooter = GatlingShooter::from_config(config).await?;
+    let mut shooter = GatlingShooter::from_config(config.clone()).await?;
     let mut gatling_report = Default::default();
     // Trigger the setup phase.
     shooter.setup(&mut gatling_report).await?;
+
+    let threads = std::cmp::min(num_cpus::get(), config.run.concurrency as usize);
+    info!("Using {} threads", threads);
 
     // Run the benchmarks.
     shooter.run(&mut gatling_report).await?;
@@ -80,7 +81,8 @@ pub struct GatlingEnvironment {
 
 impl GatlingShooter {
     pub async fn from_config(config: GatlingConfig) -> Result<Self> {
-        let starknet_rpc = Arc::new(starknet_rpc_provider(Url::parse(&config.clone().rpc.url)?));
+        let starknet_rpc: Arc<JsonRpcClient<HttpTransport>> =
+            Arc::new(starknet_rpc_provider(Url::parse(&config.clone().rpc.url)?));
 
         let signer = LocalWallet::from(SigningKey::from_secret_scalar(config.deployer.signing_key));
 
@@ -88,7 +90,7 @@ impl GatlingShooter {
             starknet_rpc.clone(),
             signer.clone(),
             config.deployer.address,
-            chain_id::TESTNET,
+            config.setup.chain_id,
             ExecutionEncoding::New,
         );
 
@@ -156,19 +158,20 @@ impl GatlingShooter {
             ContractSourceConfig::V1(_) => ExecutionEncoding::New,
         };
 
+        let erc20_address = self.deploy_erc20(erc20_class_hash).await?;
+        let erc721_address = self.deploy_erc721(erc721_class_hash).await?;
+
         let accounts = if setup_config.num_accounts > 0 {
             self.create_accounts(
                 account_class_hash,
                 setup_config.num_accounts,
                 execution_encoding,
+                erc20_address,
             )
             .await?
         } else {
             Vec::new()
         };
-
-        let erc20_address = self.deploy_erc20(erc20_class_hash).await?;
-        let erc721_address = self.deploy_erc721(erc721_class_hash).await?;
 
         let environment = GatlingEnvironment {
             _erc20_address: erc20_address,
@@ -222,7 +225,7 @@ impl GatlingShooter {
 
         let mut transactions = transactions.into_iter();
 
-        for _ in 0..TX_VALIDATION_CONCURRENCY {
+        for _ in 0..self.config.run.concurrency {
             if let Some(transaction) = transactions.next() {
                 let starknet_rpc = Arc::clone(&self.starknet_rpc);
                 set.spawn(async move {
@@ -626,7 +629,8 @@ impl GatlingShooter {
         let name = selector!("TestToken");
         let symbol = selector!("TT");
         let decimals = felt!("128");
-        let (initial_supply_low, initial_supply_high) = (felt!("100000"), felt!("0"));
+        let (initial_supply_low, initial_supply_high) =
+            (felt!("0xFFFFFFFFF"), felt!("0xFFFFFFFFF"));
         let recipient = self.account.address();
 
         let constructor_args = vec![
@@ -658,8 +662,8 @@ impl GatlingShooter {
         let deploy = contract_factory.deploy(constructor_args, self.config.deployer.salt, unique);
 
         info!(
-            "Deploying ERC20 contract with nonce={}, address={address}",
-            nonce
+            "Deploying ERC20 contract with nonce={}, address={:#064x}",
+            nonce, address
         );
 
         let result = deploy.nonce(nonce).max_fee(MAX_FEE).send().await?;
@@ -677,11 +681,23 @@ impl GatlingShooter {
     }
 
     /// Create accounts.
+    ///
+    /// # Arguments
+    ///
+    /// * `class_hash` - The class hash of the account contract.
+    /// * `num_accounts` - The number of accounts to create.
+    /// * `execution_encoding` - Execution encoding to use, `Legacy` for Cairo Zero and `New` for Cairo
+    /// * `erc20_address` - The address of the ERC20 contract to use for funding the accounts.
+    ///
+    /// # Returns
+    ///
+    /// A vector of the created accounts.
     async fn create_accounts<'a>(
         &mut self,
         class_hash: FieldElement,
         num_accounts: usize,
         execution_encoding: ExecutionEncoding,
+        erc20_address: FieldElement,
     ) -> Result<Vec<StarknetAccount>> {
         info!("Creating {} accounts", num_accounts);
 
@@ -695,9 +711,13 @@ impl GatlingShooter {
             // TODO: Check if OpenZepplinAccountFactory could be used with other type of accounts ? or should we require users to use OpenZepplinAccountFactory ?
             let signer = self.signer.clone();
             let provider = self.starknet_rpc.clone();
-            let account_factory =
-                OpenZeppelinAccountFactory::new(class_hash, chain_id::TESTNET, &signer, &provider)
-                    .await?;
+            let account_factory = OpenZeppelinAccountFactory::new(
+                class_hash,
+                self.config.setup.chain_id,
+                &signer,
+                &provider,
+            )
+            .await?;
 
             let salt = self.config.deployer.salt + FieldElement::from(i);
 
@@ -716,7 +736,7 @@ impl GatlingShooter {
                         self.starknet_rpc.clone(),
                         signer.clone(),
                         address,
-                        chain_id::TESTNET,
+                        self.config.setup.chain_id,
                         execution_encoding,
                     );
                     deployed_accounts.push(account);
@@ -728,11 +748,15 @@ impl GatlingShooter {
 
             info!("Funding account {i} at address {address:#064x}");
             let tx_hash = self
+                .transfer(erc20_address, self.account.clone(), address, felt!("0xFFF"))
+                .await?;
+            wait_for_tx(&self.starknet_rpc, tx_hash, CHECK_INTERVAL).await?;
+            let tx_hash = self
                 .transfer(
                     fee_token_address,
                     self.account.clone(),
                     address,
-                    felt!("0xFFFFFFFFF"),
+                    felt!("0xFFFFFFFFFFFFFF"),
                 )
                 .await?;
             wait_for_tx(&self.starknet_rpc, tx_hash, CHECK_INTERVAL).await?;
@@ -743,7 +767,7 @@ impl GatlingShooter {
                 self.starknet_rpc.clone(),
                 signer.clone(),
                 result.contract_address,
-                chain_id::TESTNET,
+                self.config.setup.chain_id,
                 execution_encoding,
             );
 
