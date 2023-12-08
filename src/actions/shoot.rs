@@ -38,7 +38,7 @@ use std::time::{Duration, SystemTime};
 use url::Url;
 
 // Used to bypass validation
-pub static MAX_FEE: FieldElement = felt!("0x515100000000000");
+pub static MAX_FEE: FieldElement = felt!("0xffffff");
 pub static CHECK_INTERVAL: Duration = Duration::from_millis(500);
 
 type StarknetAccount = SingleOwnerAccount<Arc<JsonRpcClient<HttpTransport>>, LocalWallet>;
@@ -756,7 +756,7 @@ impl GatlingShooter {
                     fee_token_address,
                     self.account.clone(),
                     address,
-                    felt!("0xFFFFFFFFF"),
+                    felt!("0xFFFFFFFFFFFFFF"),
                 )
                 .await?;
             wait_for_tx(&self.starknet_rpc, tx_hash, CHECK_INTERVAL).await?;
