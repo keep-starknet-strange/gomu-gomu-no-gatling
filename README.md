@@ -42,6 +42,9 @@ RUST_LOG=debug cargo run -- shoot -c config/default.yaml
 gatling --help
 ```
 
+For Katana, currently you need to increase the `DEFAULT_PREFUNDED_ACCOUNT_BALANCE` in constants to `0xffffffffffffffffffffffffffffffff`
+and run the node with flag `--no-validate`.
+
 ### Configuration
 
 Gomu gomu's configuration is specified as a yaml file.
