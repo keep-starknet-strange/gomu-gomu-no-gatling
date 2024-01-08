@@ -99,6 +99,7 @@ pub struct DeployerConfig {
     pub salt: FieldElement,
     pub address: FieldElement,
     pub signing_key: FieldElement,
+    pub legacy_account: bool
 }
 
 #[derive(Debug, Deserialize, Clone)]
