@@ -23,3 +23,6 @@ Cargo.lock
 
 # Gatling reports directory
 reports
+
+# IntelliJ IDEA
+.idea
