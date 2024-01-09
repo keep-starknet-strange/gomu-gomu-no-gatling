@@ -91,7 +91,11 @@ impl GatlingShooter {
             signer.clone(),
             config.deployer.address,
             config.setup.chain_id,
-            if config.deployer.legacy_account { ExecutionEncoding::Legacy } else {ExecutionEncoding::New},
+            if config.deployer.legacy_account {
+                ExecutionEncoding::Legacy
+            } else {
+                ExecutionEncoding::New
+            },
         );
 
         // Fails if nonce is null (which is the case for 1st startup)
