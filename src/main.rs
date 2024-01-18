@@ -2,7 +2,7 @@
 extern crate log;
 use clap::Parser;
 use color_eyre::eyre::Result;
-use dotenv::dotenv;
+use dotenvy::dotenv;
 use gatling::{
     actions::shoot::shoot,
     cli::{Cli, Command},
