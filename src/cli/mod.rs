@@ -3,7 +3,7 @@
 // Imports
 use clap::{Args, Parser, Subcommand};
 
-const VERSION_STRING: &str = concat!(env!("CARGO_PKG_VERSION"));
+const VERSION_STRING: &str = env!("CARGO_PKG_VERSION");
 
 /// Main CLI struct
 #[derive(Parser, Debug)]
