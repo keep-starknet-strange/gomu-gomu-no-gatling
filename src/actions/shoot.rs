@@ -207,7 +207,7 @@ impl GatlingShooter {
 
             std::fs::create_dir_all(&self.config.report.reports_dir)?;
             let writer = std::fs::File::create(report_path)?;
-            serde_json::to_writer(writer, &report.to_json()?)?;
+            serde_json::to_writer(writer, &report.to_json())?;
         }
 
         Ok(())

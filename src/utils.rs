@@ -92,16 +92,26 @@ impl Default for SysInfo {
 
 impl fmt::Display for SysInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self {
+            os_name,
+            kernel_version,
+            arch,
+            cpu_count,
+            cpu_frequency,
+            cpu_brand,
+            memory,
+        } = self;
+
+        let cpu_ghz_freq = *cpu_frequency as f64 / 1000.0;
+        let gigabyte_memory = memory / (1024 * 1024 * 1024);
+
         writeln!(
             f,
-            "System Information:\nSystem : {} Kernel Version {}\nArch   : {}\nCPU    : {} {:.2}GHz {} cores\nMemory : {} GB",
-            self.os_name,
-            self.kernel_version,
-            self.arch,
-            self.cpu_brand,
-            format!("{:.2} GHz", self.cpu_frequency as f64 / 1000.0),
-            self.cpu_count,
-            self.memory / (1024 * 1024 * 1024)
+            "System Information:\n\
+            System : {os_name} Kernel Version {kernel_version}\n\
+            Arch   : {arch}\n\
+            CPU    : {cpu_brand} {cpu_ghz_freq:.2} GHz {cpu_count} cores\n\
+            Memory : {gigabyte_memory} GB"
         )
     }
 }
