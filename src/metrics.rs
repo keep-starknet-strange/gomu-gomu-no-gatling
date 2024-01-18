@@ -4,7 +4,6 @@ use color_eyre::Result;
 
 use serde_json::{json, Value};
 use starknet::providers::{jsonrpc::HttpTransport, JsonRpcClient, Provider};
-use statrs::statistics::Statistics;
 use std::{fmt, sync::Arc};
 
 pub const BLOCK_TIME: u64 = 6;
@@ -143,7 +142,7 @@ fn average_tps(num_tx_per_block: &[u64]) -> f64 {
 }
 
 fn average_tpb(num_tx_per_block: &[u64]) -> f64 {
-    num_tx_per_block.iter().map(|x| *x as f64).mean()
+    num_tx_per_block.iter().sum::<u64>() as f64 / num_tx_per_block.len() as f64
 }
 
 pub fn compute_all_metrics(num_tx_per_block: Vec<u64>) -> Vec<MetricResult> {
