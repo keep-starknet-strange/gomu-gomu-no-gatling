@@ -51,8 +51,7 @@ pub async fn shoot(config: GatlingConfig) -> Result<GatlingReport> {
     // Trigger the setup phase.
     shooter.setup(&mut gatling_report).await?;
 
-    let threads = std::cmp::min(num_cpus::get(), config.run.concurrency as usize);
-    info!("Using {} threads", threads);
+    info!("Using {} threads", config.run.concurrency);
 
     // Run the benchmarks.
     shooter.run(&mut gatling_report).await?;
