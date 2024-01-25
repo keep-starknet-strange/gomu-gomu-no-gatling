@@ -49,7 +49,7 @@ pub async fn shoot(config: GatlingConfig) -> Result<GatlingReport> {
     let mut shooter = GatlingShooter::from_config(config.clone()).await?;
     let mut gatling_report = Default::default();
     // Trigger the setup phase.
-    shooter.setup(&mut gatling_report).await?;
+    shooter.setup().await?;
 
     info!("Using {} threads", config.run.concurrency);
 
@@ -63,19 +63,19 @@ pub async fn shoot(config: GatlingConfig) -> Result<GatlingReport> {
 }
 
 pub struct GatlingShooter {
-    config: GatlingConfig,
-    starknet_rpc: Arc<JsonRpcClient<HttpTransport>>,
-    signer: LocalWallet,
-    account: StarknetAccount,
-    nonces: HashMap<FieldElement, FieldElement>,
-    environment: Option<GatlingEnvironment>, // Will be populated in setup phase
+    pub config: GatlingConfig,
+    pub starknet_rpc: Arc<JsonRpcClient<HttpTransport>>,
+    pub signer: LocalWallet,
+    pub account: StarknetAccount,
+    pub nonces: HashMap<FieldElement, FieldElement>,
+    pub environment: Option<GatlingEnvironment>, // Will be populated in setup phase
 }
 
 #[derive(Clone)]
 pub struct GatlingEnvironment {
-    _erc20_address: FieldElement,
-    erc721_address: FieldElement,
-    accounts: Vec<StarknetAccount>,
+    pub _erc20_address: FieldElement,
+    pub erc721_address: FieldElement,
+    pub accounts: Vec<StarknetAccount>,
 }
 
 impl GatlingShooter {
@@ -137,7 +137,7 @@ impl GatlingShooter {
     }
 
     /// Setup the simulation.
-    async fn setup<'a>(&mut self, _gatling_report: &'a mut GatlingReport) -> Result<()> {
+    pub async fn setup(&mut self) -> Result<()> {
         let chain_id = self.starknet_rpc.chain_id().await?.to_bytes_be();
         let block_number = self.starknet_rpc.block_number().await?;
         info!(
@@ -390,7 +390,7 @@ impl GatlingShooter {
         Ok(())
     }
 
-    async fn run_erc20(&mut self, num_transfers: u64) -> (Vec<FieldElement>, Vec<EyreReport>) {
+    pub async fn run_erc20(&mut self, num_transfers: u64) -> (Vec<FieldElement>, Vec<EyreReport>) {
         info!("Sending {num_transfers} ERC20 transfer transactions ...");
 
         let start = SystemTime::now();
