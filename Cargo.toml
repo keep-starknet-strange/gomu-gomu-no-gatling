@@ -16,6 +16,7 @@ opt-level = 3
 # Starknet dependencies
 starknet = "0.6.0"
 
+goose = "0.17.2"
 env_logger = "0.10.0"
 log = "0.4.17"
 tokio = { version = "1", features = ["full"] }
@@ -32,3 +33,4 @@ rand = { version = "0.8.5", features = ["rand_chacha"] }
 lazy_static = "1.4.0"
 colored = "2.0.4"
 sysinfo = "0.29.8"
+crossbeam-queue = "0.3.11"
