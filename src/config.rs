@@ -89,7 +89,6 @@ pub struct SetupConfig {
     pub erc721_contract: ContractSourceConfig,
     pub account_contract: ContractSourceConfig,
     pub fee_token_address: FieldElement,
-    pub num_accounts: usize,
     #[serde(deserialize_with = "from_str_deserializer")]
     pub chain_id: FieldElement,
 }

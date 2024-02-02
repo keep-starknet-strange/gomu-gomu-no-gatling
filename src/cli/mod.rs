@@ -27,8 +27,6 @@ pub struct Cli {
 pub enum Command {
     /// Trigger a load test.
     Shoot {},
-    /// Trigger goose load test.
-    Goose {},
 }
 
 #[derive(Debug, Args)]

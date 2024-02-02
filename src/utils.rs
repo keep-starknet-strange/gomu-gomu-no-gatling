@@ -18,8 +18,7 @@ use starknet::{
 use std::time::Duration;
 use sysinfo::{CpuExt, System, SystemExt};
 
-use crate::actions::shoot::{GatlingReport, CHECK_INTERVAL};
-use crate::metrics::BenchmarkReport;
+use crate::metrics::{BenchmarkReport, GatlingReport};
 
 lazy_static! {
     pub static ref SYSINFO: SysInfo = SysInfo::new();
@@ -159,7 +158,7 @@ pub async fn wait_for_tx(
                 ..
             })) => {
                 debug!("Waiting for transaction {tx_hash:#064x} to show up");
-                tokio::time::sleep(CHECK_INTERVAL).await;
+                tokio::time::sleep(check_interval).await;
             }
             Err(err) => {
                 return Err(eyre!(err).wrap_err(format!(
