@@ -36,6 +36,12 @@ pub struct MetricResult {
     pub value: f64,
 }
 
+/// The simulation report.
+#[derive(Debug, Default, Clone)]
+pub struct GatlingReport {
+    pub benchmark_reports: Vec<BenchmarkReport>,
+}
+
 /// A benchmark report contains a name (used for displaying) and a vector of metric results
 /// of all the metrics that were computed for the benchmark
 /// A benchmark report can be created from a block range or from the last x blocks

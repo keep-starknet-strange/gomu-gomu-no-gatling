@@ -4,7 +4,7 @@ use clap::Parser;
 use color_eyre::eyre::Result;
 use dotenvy::dotenv;
 use gatling::{
-    actions::{self, shoot::shoot},
+    actions,
     cli::{Cli, Command},
     config::GatlingConfig,
 };
@@ -34,11 +34,7 @@ async fn main() -> Result<()> {
     // Execute the command.
     match cli.command {
         Command::Shoot { .. } => {
-            let gatling_report = shoot(cfg).await?;
-            info!("Gatling completed: {:#?}", gatling_report);
-        }
-        Command::Goose { .. } => {
-            actions::goose::goose(cfg).await?;
+            actions::shoot(cfg).await?;
         }
     }
 
