@@ -267,7 +267,9 @@ async fn transfer(user: &mut GooseUser, erc20_address: FieldElement) -> Transact
     .await?;
 
     let GooseUserState { nonce, prev_tx, .. } =
-        user.get_session_data_mut::<GooseUserState>().unwrap();
+        user.get_session_data_mut::<GooseUserState>().expect(
+            "Should be successful as we already asserted that the session data is a GooseUserState",
+        );
 
     *nonce += FieldElement::ONE;
 
