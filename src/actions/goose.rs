@@ -106,6 +106,14 @@ pub async fn erc721(shooter: &GatlingShooterSetup) -> color_eyre::Result<()> {
         log::warn!("Number of erc721 mints is not evenly divisble by concurrency, doing {num_erc721_mints} mints instead");
     }
 
+    let goose_mint_config = {
+        let mut default = GooseConfiguration::default();
+        default.host = config.rpc.url.clone();
+        default.iterations = goose_iterations as usize;
+        default.users = Some(config.run.concurrency as usize);
+        default
+    };
+
     let nonces = Arc::new(ArrayQueue::new(num_erc721_mints as usize));
     let erc721_address = environment.erc721_address;
     let mut nonce = shooter.deployer_account().get_nonce().await?;
@@ -116,14 +124,6 @@ pub async fn erc721(shooter: &GatlingShooterSetup) -> color_eyre::Result<()> {
             .expect("ArrayQueue has capacity for all mints");
         nonce += FieldElement::ONE;
     }
-
-    let goose_mint_config = {
-        let mut default = GooseConfiguration::default();
-        default.host = config.rpc.url.clone();
-        default.iterations = (config.run.num_erc721_mints / config.run.concurrency) as usize;
-        default.users = Some(config.run.concurrency as usize);
-        default
-    };
 
     let from_account = shooter.deployer_account().clone();
 
