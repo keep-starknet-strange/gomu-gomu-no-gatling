@@ -1,11 +1,6 @@
-use std::{
-    mem,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc,
-    },
-};
+use std::{mem, sync::Arc};
 
+use color_eyre::eyre::ensure;
 use crossbeam_queue::ArrayQueue;
 use goose::{config::GooseConfiguration, prelude::*};
 use serde::{de::DeserializeOwned, Serialize};
@@ -29,71 +24,65 @@ use starknet::{
 use crate::{
     actions::shoot::{GatlingShooterSetup, CHECK_INTERVAL, MAX_FEE},
     generators::get_rng,
+    utils::wait_for_tx,
 };
 
 use super::shoot::StarknetAccount;
 
 pub async fn erc20(shooter: &GatlingShooterSetup) -> color_eyre::Result<()> {
-    let _erc20_address = shooter.environment().unwrap().erc20_address;
+    let environment = shooter.environment()?;
+    let erc20_address = environment.erc20_address;
     let config = shooter.config();
+
+    let goose_iterations = config.run.num_erc20_transfers / config.run.concurrency;
+    let num_erc20_transfers = goose_iterations * config.run.concurrency;
+
+    ensure!(
+        goose_iterations != 0,
+        "Too few erc20 transfers for the amount of concurrency"
+    );
+
+    if num_erc20_transfers != config.run.num_erc20_transfers {
+        log::warn!("Number of erc20 transfers is not evenly divisble by concurrency, doing {num_erc20_transfers} transfers instead");
+    }
 
     let goose_config = {
         let mut default = GooseConfiguration::default();
         default.host = config.rpc.url.clone();
-        default.iterations = (config.run.num_erc20_transfers / config.run.concurrency) as usize;
+        default.iterations = goose_iterations as usize;
         default.users = Some(config.run.concurrency as usize);
         default
     };
 
-    let queue = Arc::new(ArrayQueue::new(config.run.num_erc20_transfers as usize));
-    let queue_trans = queue.clone();
-    let queue_trans_verify = queue_trans.clone();
+    let transfer_setup: TransactionFunction =
+        setup(environment.accounts.clone(), num_erc20_transfers as usize).await?;
 
-    let last_trans = Arc::new([
-        AtomicU64::new(0),
-        AtomicU64::new(0),
-        AtomicU64::new(0),
-        AtomicU64::new(0),
-    ]);
-    let last_transaction_clone = last_trans.clone();
+    let transfer: TransactionFunction =
+        Arc::new(move |user| Box::pin(transfer(user, erc20_address)));
 
-    let transfer: TransactionFunction = Arc::new(move |user| {
-        let queue = queue_trans.clone();
-        let last_mint = last_transaction_clone.clone();
-        Box::pin(async move { transfer(user, &queue, _erc20_address, &last_mint).await })
-    });
+    let transfer_wait: TransactionFunction = goose_user_wait_last_tx(shooter.rpc_client().clone());
 
-    let transfer_verify: TransactionFunction = Arc::new(move |user| {
-        let queue = queue_trans_verify.clone();
-        Box::pin(async move { verify_transacs(user, &queue).await })
-    });
-
-    let transfer_setup = setup(shooter.environment()?.accounts.clone()).await?;
+    let transfer_verify: TransactionFunction = Arc::new(|user| Box::pin(verify_transacs(user)));
 
     GooseAttack::initialize_with_config(goose_config.clone())?
         .register_scenario(
-            scenario!("Transactions")
+            scenario!("Transfer")
                 .register_transaction(
                     transaction!(transfer_setup)
-                        .set_name("Setup")
+                        .set_name("Transfer Setup")
                         .set_on_start(),
                 )
-                .register_transaction(transaction!(transfer).set_name("Transfer")),
-        )
-        .execute()
-        .await?;
-
-    // Wait for the last transaction to be incorporated in a block
-    shooter
-        .wait_for_tx(
-            FieldElement::from_mont(Arc::try_unwrap(last_trans).unwrap().map(|x| x.into_inner())),
-            CHECK_INTERVAL,
-        )
-        .await?;
-
-    GooseAttack::initialize_with_config(goose_config)?
-        .register_scenario(
-            scenario!("Transactions Verify").register_transaction(transaction!(transfer_verify)),
+                .register_transaction(transaction!(transfer).set_name("Transfer").set_sequence(1))
+                .register_transaction(
+                    transaction!(transfer_wait)
+                        .set_name("Transfer Finalizing")
+                        .set_sequence(2),
+                )
+                .register_transaction(
+                    transaction!(transfer_verify)
+                        .set_name("Transfer Verification")
+                        .set_sequence(3),
+                ),
         )
         .execute()
         .await?;
@@ -103,11 +92,25 @@ pub async fn erc20(shooter: &GatlingShooterSetup) -> color_eyre::Result<()> {
 
 pub async fn erc721(shooter: &GatlingShooterSetup) -> color_eyre::Result<()> {
     let config = shooter.config();
-    let nonces = Arc::new(ArrayQueue::new(config.run.num_erc721_mints as usize));
-    let erc721_address = shooter.environment().unwrap().erc721_address;
+    let environment = shooter.environment()?;
+
+    let goose_iterations = config.run.num_erc721_mints / config.run.concurrency;
+    let num_erc721_mints = goose_iterations * config.run.concurrency;
+
+    ensure!(
+        goose_iterations != 0,
+        "Too few erc721 mints for the amount of concurrency"
+    );
+
+    if num_erc721_mints != config.run.num_erc721_mints {
+        log::warn!("Number of erc721 mints is not evenly divisble by concurrency, doing {num_erc721_mints} mints instead");
+    }
+
+    let nonces = Arc::new(ArrayQueue::new(num_erc721_mints as usize));
+    let erc721_address = environment.erc721_address;
     let mut nonce = shooter.deployer_account().get_nonce().await?;
 
-    for _ in 0..config.run.num_erc721_mints {
+    for _ in 0..num_erc721_mints {
         nonces
             .push(nonce)
             .expect("ArrayQueue has capacity for all mints");
@@ -122,69 +125,45 @@ pub async fn erc721(shooter: &GatlingShooterSetup) -> color_eyre::Result<()> {
         default
     };
 
-    let queue = Arc::new(ArrayQueue::new(config.run.num_erc721_mints as usize));
-    let queue_mint = queue.clone();
-    let queue_mint_verify = queue_mint.clone();
-
-    let last_trans = Arc::new([
-        AtomicU64::new(0),
-        AtomicU64::new(0),
-        AtomicU64::new(0),
-        AtomicU64::new(0),
-    ]);
-    let last_mint_clone = last_trans.clone();
-
     let from_account = shooter.deployer_account().clone();
 
+    let mint_setup: TransactionFunction =
+        setup(environment.accounts.clone(), num_erc721_mints as usize).await?;
+
     let mint: TransactionFunction = Arc::new(move |user| {
-        let queue = queue_mint.clone();
-        let nonces = nonces.clone();
-        let nonce = nonces.pop().unwrap();
-        let last_mint = last_mint_clone.clone();
+        let nonce = nonces
+            .pop()
+            .expect("Nonce ArrayQueue should have enough nonces for all mints");
         let from_account = from_account.clone();
-        Box::pin(async move {
-            mint(
-                user,
-                &queue,
-                erc721_address,
-                nonce,
-                &from_account,
-                &last_mint,
-            )
-            .await
-        })
+        Box::pin(async move { mint(user, erc721_address, nonce, &from_account).await })
     });
 
-    let mint_verify: TransactionFunction = Arc::new(move |user| {
-        let queue = queue_mint_verify.clone();
-        Box::pin(async move { verify_transacs(user, &queue).await })
-    });
+    let mint_wait: TransactionFunction = goose_user_wait_last_tx(shooter.rpc_client().clone());
 
-    let mint_setup = setup(shooter.environment()?.accounts.clone()).await?;
+    let mint_verify: TransactionFunction = Arc::new(|user| Box::pin(verify_transacs(user)));
 
     GooseAttack::initialize_with_config(goose_mint_config.clone())?
         .register_scenario(
             scenario!("Minting")
-                .register_transaction(transaction!(mint_setup).set_name("Setup").set_on_start())
-                .register_transaction(transaction!(mint).set_name("Minting")),
+                .register_transaction(
+                    transaction!(mint_setup)
+                        .set_name("Mint Setup")
+                        .set_on_start(),
+                )
+                .register_transaction(transaction!(mint).set_name("Minting").set_sequence(1))
+                .register_transaction(
+                    transaction!(mint_wait)
+                        .set_name("Mint Finalizing")
+                        .set_sequence(2),
+                )
+                .register_transaction(
+                    transaction!(mint_verify)
+                        .set_name("Mint Verification")
+                        .set_sequence(3),
+                ),
         )
         .execute()
         .await?;
-
-    // Wait for the last transaction to be incorporated in a block
-    shooter
-        .wait_for_tx(
-            FieldElement::from_mont(Arc::try_unwrap(last_trans).unwrap().map(|x| x.into_inner())),
-            CHECK_INTERVAL,
-        )
-        .await?;
-
-    GooseAttack::initialize_with_config(goose_mint_config)?
-        .register_scenario(scenario!("Mint Verify").register_transaction(transaction!(mint_verify)))
-        .execute()
-        .await?;
-
-    // todo!()
 
     Ok(())
 }
@@ -193,23 +172,33 @@ pub async fn erc721(shooter: &GatlingShooterSetup) -> color_eyre::Result<()> {
 struct GooseUserState {
     account: StarknetAccount,
     nonce: FieldElement,
+    prev_tx: Vec<FieldElement>,
 }
 
 pub type RpcError = ProviderError<JsonRpcClientError<HttpTransportError>>;
 
 impl GooseUserState {
-    pub async fn new(account: StarknetAccount) -> Result<Self, RpcError> {
+    pub async fn new(
+        account: StarknetAccount,
+        transactions_amount: usize,
+    ) -> Result<Self, RpcError> {
         Ok(Self {
             nonce: account.get_nonce().await?,
             account,
+            prev_tx: Vec::with_capacity(transactions_amount),
         })
     }
 }
 
-async fn setup(accounts: Vec<StarknetAccount>) -> Result<TransactionFunction, RpcError> {
+async fn setup(
+    accounts: Vec<StarknetAccount>,
+    transactions_amount: usize,
+) -> Result<TransactionFunction, RpcError> {
     let queue = ArrayQueue::new(accounts.len());
     for account in accounts {
-        queue.push(GooseUserState::new(account).await?).unwrap();
+        queue
+            .push(GooseUserState::new(account, transactions_amount).await?)
+            .expect("Queue should have enough space for all accounts as it's length is from the accounts vec");
     }
     let queue = Arc::new(queue);
 
@@ -225,62 +214,77 @@ async fn setup(accounts: Vec<StarknetAccount>) -> Result<TransactionFunction, Rp
     }))
 }
 
-async fn transfer(
-    user: &mut GooseUser,
-    queue: &ArrayQueue<FieldElement>,
-    erc20_address: FieldElement,
-    prev_hash: &[AtomicU64; 4],
-) -> TransactionResult {
-    let GooseUserState {
-        account,
-        nonce: state_nonce,
-    } = user.get_session_data_mut::<GooseUserState>().unwrap();
+fn goose_user_wait_last_tx(provider: Arc<JsonRpcClient<HttpTransport>>) -> TransactionFunction {
+    Arc::new(move |user| {
+        let thing = user
+            .get_session_data::<GooseUserState>()
+            .expect("Should be in a goose user with GooseUserState session data")
+            .prev_tx
+            .last()
+            .expect("At least one transaction should have been done");
 
-    let nonce = *state_nonce;
-    *state_nonce += FieldElement::ONE;
-    let account = account.clone();
+        let provider = provider.clone();
+
+        Box::pin(async move {
+            wait_for_tx(&provider, *thing, CHECK_INTERVAL)
+                .await
+                .expect("Transaction should have been successful");
+
+            Ok(())
+        })
+    })
+}
+
+// Hex: 0xdead
+// from_hex_be isn't const whereas from_mont is
+const VOID_ADDRESS: FieldElement = FieldElement::from_mont([
+    18446744073707727457,
+    18446744073709551615,
+    18446744073709551615,
+    576460752272412784,
+]);
+
+async fn transfer(user: &mut GooseUser, erc20_address: FieldElement) -> TransactionResult {
+    let GooseUserState { account, nonce, .. } = user
+        .get_session_data::<GooseUserState>()
+        .expect("Should be in a goose user with GooseUserState session data");
 
     let (amount_low, amount_high) = (felt!("1"), felt!("0"));
 
     let call = Call {
         to: erc20_address,
         selector: selector!("transfer"),
-        calldata: vec![
-            FieldElement::from_hex_be("0xdead").unwrap(),
-            amount_low,
-            amount_high,
-        ],
+        calldata: vec![VOID_ADDRESS, amount_low, amount_high],
     };
 
     let response: InvokeTransactionResult = send_execution(
         user,
         vec![call],
-        nonce,
-        &account,
+        *nonce,
+        &account.clone(),
         JsonRpcMethod::AddInvokeTransaction,
     )
     .await?;
 
-    queue.push(response.transaction_hash).unwrap();
+    let GooseUserState { nonce, prev_tx, .. } =
+        user.get_session_data_mut::<GooseUserState>().unwrap();
 
-    for (atomic, store) in prev_hash.iter().zip(response.transaction_hash.into_mont()) {
-        atomic.store(store, Ordering::Relaxed)
-    }
+    *nonce += FieldElement::ONE;
+
+    prev_tx.push(response.transaction_hash);
 
     Ok(())
 }
 
 async fn mint(
     user: &mut GooseUser,
-    queue: &ArrayQueue<FieldElement>,
     erc721_address: FieldElement,
     nonce: FieldElement,
     from_account: &SingleOwnerAccount<Arc<JsonRpcClient<HttpTransport>>, LocalWallet>,
-    prev_hash: &[AtomicU64; 4],
 ) -> TransactionResult {
     let recipient = user
         .get_session_data::<GooseUserState>()
-        .unwrap()
+        .expect("Should be in a goose user with GooseUserState session data")
         .account
         .clone()
         .address();
@@ -290,11 +294,7 @@ async fn mint(
     let call = Call {
         to: erc721_address,
         selector: selector!("mint"),
-        calldata: vec![
-            recipient, // recipient
-            token_id_low,
-            token_id_high,
-        ],
+        calldata: vec![recipient, token_id_low, token_id_high],
     };
 
     let response: InvokeTransactionResult = send_execution(
@@ -306,20 +306,23 @@ async fn mint(
     )
     .await?;
 
-    queue.push(response.transaction_hash).unwrap();
-
-    for (atomic, store) in prev_hash.iter().zip(response.transaction_hash.into_mont()) {
-        atomic.store(store, Ordering::Relaxed)
-    }
+    user.get_session_data_mut::<GooseUserState>()
+        .expect(
+            "Should be successful as we already asserted that the session data is a GooseUserState",
+        )
+        .prev_tx
+        .push(response.transaction_hash);
 
     Ok(())
 }
 
-async fn verify_transacs(
-    user: &mut GooseUser,
-    queue: &ArrayQueue<FieldElement>,
-) -> TransactionResult {
-    let transaction = queue.pop().unwrap();
+async fn verify_transacs(user: &mut GooseUser) -> TransactionResult {
+    let transaction = user
+        .get_session_data_mut::<GooseUserState>()
+        .expect("Should be in a goose user with GooseUserState session data")
+        .prev_tx
+        .pop()
+        .expect("There should be enough previous transactions for every verification");
 
     let receipt: MaybePendingTransactionReceipt =
         send_request(user, JsonRpcMethod::GetTransactionReceipt, transaction).await?;
@@ -346,7 +349,7 @@ pub async fn send_execution<T: DeserializeOwned>(
 ) -> Result<T, Box<TransactionError>> {
     let calldata = from_account.encode_calls(&calls);
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Removes warning for unused fields, we need them to properly transmute
     struct FakeRawExecution {
         calls: Vec<Call>,
         nonce: FieldElement,
@@ -367,7 +370,10 @@ pub async fn send_execution<T: DeserializeOwned>(
         sender_address: from_account.address(),
         calldata,
         max_fee: MAX_FEE,
-        signature: from_account.sign_execution(&raw_exec).await.unwrap(),
+        signature: from_account
+            .sign_execution(&raw_exec)
+            .await
+            .expect("Raw Execution should be correctly constructed for signature"),
         nonce,
         is_query: false,
     };
@@ -408,7 +414,8 @@ pub async fn send_request<T: DeserializeOwned>(
     match body {
         JsonRpcResponse::Success { result, .. } => Ok(result),
         // Returning this error would probably be a good idea,
-        // but the goose error type doesn't allow it
+        // but the goose error type doesn't allow it and we are
+        // required to return it as a constraint of TransactionFunction
         JsonRpcResponse::Error { error, .. } => panic!("{error}"),
     }
 }

@@ -95,12 +95,12 @@ impl GatlingShooterSetup {
         &self.config
     }
 
-    pub fn deployer_account(&self) -> &StarknetAccount {
-        &self.account
+    pub fn rpc_client(&self) -> &Arc<JsonRpcClient<HttpTransport>> {
+        &self.starknet_rpc
     }
 
-    pub async fn wait_for_tx(&self, tx_hash: FieldElement, check_interval: Duration) -> Result<()> {
-        wait_for_tx(&self.starknet_rpc, tx_hash, check_interval).await
+    pub fn deployer_account(&self) -> &StarknetAccount {
+        &self.account
     }
 
     /// Setup the simulation.
