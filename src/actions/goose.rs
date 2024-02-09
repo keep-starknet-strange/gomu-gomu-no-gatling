@@ -122,7 +122,7 @@ pub async fn erc721(shooter: &GatlingShooterSetup) -> color_eyre::Result<()> {
         default
     };
 
-    let nonces = Arc::new(ArrayQueue::new(user_iterations as usize));
+    let nonces = Arc::new(ArrayQueue::new(total_transactions as usize));
     let erc721_address = environment.erc721_address;
     let mut nonce = shooter.deployer_account().get_nonce().await?;
 
