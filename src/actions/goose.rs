@@ -62,24 +62,26 @@ pub async fn erc20(shooter: &GatlingShooterSetup) -> color_eyre::Result<()> {
 
     let transfer_wait: TransactionFunction = goose_user_wait_last_tx(shooter.rpc_client().clone());
 
-    let transfer_verify: TransactionFunction = Arc::new(|user| Box::pin(verify_transacs(user)));
-
     GooseAttack::initialize_with_config(goose_config.clone())?
         .register_scenario(
             scenario!("Transfer")
                 .register_transaction(
-                    transaction!(transfer_setup)
+                    Transaction::new(transfer_setup)
                         .set_name("Transfer Setup")
                         .set_on_start(),
                 )
-                .register_transaction(transaction!(transfer).set_name("Transfer").set_sequence(1))
                 .register_transaction(
-                    transaction!(transfer_wait)
+                    Transaction::new(transfer)
+                        .set_name("Transfer")
+                        .set_sequence(1),
+                )
+                .register_transaction(
+                    Transaction::new(transfer_wait)
                         .set_name("Transfer Finalizing")
                         .set_sequence(2),
                 )
                 .register_transaction(
-                    transaction!(transfer_verify)
+                    transaction!(verify_transactions)
                         .set_name("Transfer Verification")
                         .set_sequence(3),
                 ),
@@ -140,24 +142,22 @@ pub async fn erc721(shooter: &GatlingShooterSetup) -> color_eyre::Result<()> {
 
     let mint_wait: TransactionFunction = goose_user_wait_last_tx(shooter.rpc_client().clone());
 
-    let mint_verify: TransactionFunction = Arc::new(|user| Box::pin(verify_transacs(user)));
-
     GooseAttack::initialize_with_config(goose_mint_config.clone())?
         .register_scenario(
             scenario!("Minting")
                 .register_transaction(
-                    transaction!(mint_setup)
+                    Transaction::new(mint_setup)
                         .set_name("Mint Setup")
                         .set_on_start(),
                 )
-                .register_transaction(transaction!(mint).set_name("Minting").set_sequence(1))
+                .register_transaction(Transaction::new(mint).set_name("Minting").set_sequence(1))
                 .register_transaction(
-                    transaction!(mint_wait)
+                    Transaction::new(mint_wait)
                         .set_name("Mint Finalizing")
                         .set_sequence(2),
                 )
                 .register_transaction(
-                    transaction!(mint_verify)
+                    transaction!(verify_transactions)
                         .set_name("Mint Verification")
                         .set_sequence(3),
                 ),
@@ -318,7 +318,7 @@ async fn mint(
     Ok(())
 }
 
-async fn verify_transacs(user: &mut GooseUser) -> TransactionResult {
+async fn verify_transactions(user: &mut GooseUser) -> TransactionResult {
     let transaction = user
         .get_session_data_mut::<GooseUserState>()
         .expect("Should be in a goose user with GooseUserState session data")
