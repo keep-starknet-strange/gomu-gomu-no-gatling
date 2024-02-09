@@ -40,7 +40,10 @@ pub async fn erc20(shooter: &GatlingShooterSetup) -> color_eyre::Result<()> {
     );
 
     // div_euclid will truncate integers when not evenly divisable
-    let user_iterations = config.run.num_erc20_transfers.div_euclid(config.run.concurrency);
+    let user_iterations = config
+        .run
+        .num_erc20_transfers
+        .div_euclid(config.run.concurrency);
     // this will always be a multiple of concurrency, unlike num_erc20_transfers
     let total_transactions = user_iterations * config.run.concurrency;
 
@@ -105,7 +108,10 @@ pub async fn erc721(shooter: &GatlingShooterSetup) -> color_eyre::Result<()> {
     );
 
     // div_euclid will truncate integers when not evenly divisable
-    let user_iterations = config.run.num_erc721_mints.div_euclid(config.run.concurrency);
+    let user_iterations = config
+        .run
+        .num_erc721_mints
+        .div_euclid(config.run.concurrency);
     // this will always be a multiple of concurrency, unlike num_erc721_mints
     let total_transactions = user_iterations * config.run.concurrency;
 
