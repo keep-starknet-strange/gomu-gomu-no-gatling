@@ -34,28 +34,31 @@ pub async fn erc20(shooter: &GatlingShooterSetup) -> color_eyre::Result<()> {
     let erc20_address = environment.erc20_address;
     let config = shooter.config();
 
-    let goose_iterations = config.run.num_erc20_transfers / config.run.concurrency;
-    let num_erc20_transfers = goose_iterations * config.run.concurrency;
-
     ensure!(
-        goose_iterations != 0,
+        config.run.num_erc20_transfers >= config.run.concurrency,
         "Too few erc20 transfers for the amount of concurrency"
     );
 
-    if num_erc20_transfers != config.run.num_erc20_transfers {
-        log::warn!("Number of erc20 transfers is not evenly divisble by concurrency, doing {num_erc20_transfers} transfers instead");
+    // div_euclid will truncate integers when not evenly divisable
+    let user_iterations = config.run.num_erc20_transfers.div_euclid(config.run.concurrency);
+    // this will always be a multiple of concurrency, unlike num_erc20_transfers
+    let total_transactions = user_iterations * config.run.concurrency;
+
+    // If these are not equal that means user_iterations was truncated
+    if total_transactions != config.run.num_erc20_transfers {
+        log::warn!("Number of erc20 transfers is not evenly divisble by concurrency, doing {total_transactions} transfers instead");
     }
 
     let goose_config = {
         let mut default = GooseConfiguration::default();
         default.host = config.rpc.url.clone();
-        default.iterations = goose_iterations as usize;
+        default.iterations = user_iterations as usize;
         default.users = Some(config.run.concurrency as usize);
         default
     };
 
     let transfer_setup: TransactionFunction =
-        setup(environment.accounts.clone(), num_erc20_transfers as usize).await?;
+        setup(environment.accounts.clone(), user_iterations as usize).await?;
 
     let transfer: TransactionFunction =
         Arc::new(move |user| Box::pin(transfer(user, erc20_address)));
@@ -96,31 +99,34 @@ pub async fn erc721(shooter: &GatlingShooterSetup) -> color_eyre::Result<()> {
     let config = shooter.config();
     let environment = shooter.environment()?;
 
-    let goose_iterations = config.run.num_erc721_mints / config.run.concurrency;
-    let num_erc721_mints = goose_iterations * config.run.concurrency;
-
     ensure!(
-        goose_iterations != 0,
+        config.run.num_erc20_transfers >= config.run.concurrency,
         "Too few erc721 mints for the amount of concurrency"
     );
 
-    if num_erc721_mints != config.run.num_erc721_mints {
-        log::warn!("Number of erc721 mints is not evenly divisble by concurrency, doing {num_erc721_mints} mints instead");
+    // div_euclid will truncate integers when not evenly divisable
+    let user_iterations = config.run.num_erc721_mints.div_euclid(config.run.concurrency);
+    // this will always be a multiple of concurrency, unlike num_erc721_mints
+    let total_transactions = user_iterations * config.run.concurrency;
+
+    // If these are not equal that means user_iterations was truncated
+    if total_transactions != config.run.num_erc721_mints {
+        log::warn!("Number of erc721 mints is not evenly divisble by concurrency, doing {total_transactions} mints instead");
     }
 
     let goose_mint_config = {
         let mut default = GooseConfiguration::default();
         default.host = config.rpc.url.clone();
-        default.iterations = goose_iterations as usize;
+        default.iterations = user_iterations as usize;
         default.users = Some(config.run.concurrency as usize);
         default
     };
 
-    let nonces = Arc::new(ArrayQueue::new(num_erc721_mints as usize));
+    let nonces = Arc::new(ArrayQueue::new(user_iterations as usize));
     let erc721_address = environment.erc721_address;
     let mut nonce = shooter.deployer_account().get_nonce().await?;
 
-    for _ in 0..num_erc721_mints {
+    for _ in 0..total_transactions {
         nonces
             .push(nonce)
             .expect("ArrayQueue has capacity for all mints");
@@ -130,7 +136,7 @@ pub async fn erc721(shooter: &GatlingShooterSetup) -> color_eyre::Result<()> {
     let from_account = shooter.deployer_account().clone();
 
     let mint_setup: TransactionFunction =
-        setup(environment.accounts.clone(), num_erc721_mints as usize).await?;
+        setup(environment.accounts.clone(), user_iterations as usize).await?;
 
     let mint: TransactionFunction = Arc::new(move |user| {
         let nonce = nonces
