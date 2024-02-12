@@ -1,11 +1,10 @@
-use crate::utils::{get_num_tx_per_block, SYSINFO};
+use crate::utils::{get_num_tx_per_block, SysInfo, SYSINFO};
 
 use color_eyre::Result;
 
 use serde_json::{json, Value};
 use starknet::providers::{jsonrpc::HttpTransport, JsonRpcClient, Provider};
-use statrs::statistics::Statistics;
-use std::{fmt, sync::Arc};
+use std::{fmt, ops::Deref, sync::Arc};
 
 pub const BLOCK_TIME: u64 = 6;
 
@@ -37,6 +36,12 @@ pub struct MetricResult {
     pub value: f64,
 }
 
+/// The simulation report.
+#[derive(Debug, Default, Clone)]
+pub struct GatlingReport {
+    pub benchmark_reports: Vec<BenchmarkReport>,
+}
+
 /// A benchmark report contains a name (used for displaying) and a vector of metric results
 /// of all the metrics that were computed for the benchmark
 /// A benchmark report can be created from a block range or from the last x blocks
@@ -51,12 +56,9 @@ impl BenchmarkReport {
     pub async fn from_block_range<'a>(
         starknet_rpc: Arc<JsonRpcClient<HttpTransport>>,
         name: String,
-        start_block: u64,
-        end_block: u64,
+        mut start_block: u64,
+        mut end_block: u64,
     ) -> Result<BenchmarkReport> {
-        let mut start_block = start_block;
-        let mut end_block = end_block;
-
         // Whenever possible, skip the first and last blocks from the metrics
         // to make sure all the blocks used for calculating metrics are full
         if end_block - start_block > 2 {
@@ -85,53 +87,59 @@ impl BenchmarkReport {
         Ok(BenchmarkReport { name, metrics })
     }
 
-    pub fn to_json(&self) -> Result<Value> {
+    pub fn to_json(&self) -> Value {
+        let SysInfo {
+            os_name,
+            kernel_version,
+            arch,
+            cpu_count,
+            cpu_frequency,
+            cpu_brand,
+            memory,
+        } = SYSINFO.deref();
+
+        let gigabyte_memory = memory / (1024 * 1024 * 1024);
+
         let sysinfo_string = format!(
-            "CPU Count: {}\n\
-            CPU Model: {}\n\
-            CPU Speed (MHz): {}\n\
-            Total Memory: {} GB\n\
-            Platform: {}\n\
-            Release: {}\n\
-            Architecture: {}",
-            SYSINFO.cpu_count,
-            SYSINFO.cpu_frequency,
-            SYSINFO.cpu_brand,
-            SYSINFO.memory / (1024 * 1024 * 1024),
-            SYSINFO.os_name,
-            SYSINFO.kernel_version,
-            SYSINFO.arch
+            "CPU Count: {cpu_count}\n\
+            CPU Model: {cpu_brand}\n\
+            CPU Speed (MHz): {cpu_frequency}\n\
+            Total Memory: {gigabyte_memory} GB\n\
+            Platform: {os_name}\n\
+            Release: {kernel_version}\n\
+            Architecture: {arch}",
         );
 
-        let mut report = vec![];
-
-        for metric in self.metrics.iter() {
-            report.push(json!({
-                "name": metric.name,
-                "unit": metric.unit,
-                "value": metric.value,
-                "extra": sysinfo_string
-            }));
-        }
-
-        let report_json = serde_json::to_value(report)?;
-
-        Ok(report_json)
+        self.metrics
+            .iter()
+            .map(|metric| {
+                json!({
+                    "name": metric.name,
+                    "unit": metric.unit,
+                    "value": metric.value,
+                    "extra": sysinfo_string
+                })
+            })
+            .collect::<Value>()
     }
 }
 
 impl fmt::Display for MetricResult {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {} {}", self.name, self.value, self.unit)
+        let Self { name, value, unit } = self;
+
+        write!(f, "{name}: {value} {unit}")
     }
 }
 
 impl fmt::Display for BenchmarkReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "Benchmark Report: {}", self.name)?;
+        let Self { name, metrics } = self;
 
-        for metric in &self.metrics {
-            writeln!(f, "{}", metric)?;
+        writeln!(f, "Benchmark Report: {name}")?;
+
+        for metric in metrics {
+            writeln!(f, "{metric}")?;
         }
 
         Ok(())
@@ -143,7 +151,7 @@ fn average_tps(num_tx_per_block: &[u64]) -> f64 {
 }
 
 fn average_tpb(num_tx_per_block: &[u64]) -> f64 {
-    num_tx_per_block.iter().map(|x| *x as f64).mean()
+    num_tx_per_block.iter().sum::<u64>() as f64 / num_tx_per_block.len() as f64
 }
 
 pub fn compute_all_metrics(num_tx_per_block: Vec<u64>) -> Vec<MetricResult> {

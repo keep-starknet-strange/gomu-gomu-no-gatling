@@ -2,9 +2,9 @@
 extern crate log;
 use clap::Parser;
 use color_eyre::eyre::Result;
-use dotenv::dotenv;
+use dotenvy::dotenv;
 use gatling::{
-    actions::shoot::shoot,
+    actions,
     cli::{Cli, Command},
     config::GatlingConfig,
 };
@@ -34,9 +34,9 @@ async fn main() -> Result<()> {
     // Execute the command.
     match cli.command {
         Command::Shoot { .. } => {
-            let gatling_report = shoot(cfg).await?;
-            info!("Gatling completed: {:#?}", gatling_report);
+            actions::shoot(cfg).await?;
         }
     }
+
     Ok(())
 }

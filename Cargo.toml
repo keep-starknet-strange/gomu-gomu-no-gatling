@@ -16,7 +16,7 @@ opt-level = 3
 # Starknet dependencies
 starknet = "0.6.0"
 
-num_cpus = "1.0"
+goose = "0.17.2"
 env_logger = "0.10.0"
 log = "0.4.17"
 tokio = { version = "1", features = ["full"] }
@@ -24,7 +24,7 @@ futures = "0.3"
 clap = { version = "4.2.7", features = ["derive"] }
 color-eyre = "0.6.2"
 config = "0.13.3"
-dotenv = "0.15.0"
+dotenvy = "0.15.7"
 serde = "1.0.163"
 serde_derive = "1.0.163"
 serde_json = { version = "1.0.96", features = ["preserve_order"] }
@@ -33,4 +33,4 @@ rand = { version = "0.8.5", features = ["rand_chacha"] }
 lazy_static = "1.4.0"
 colored = "2.0.4"
 sysinfo = "0.29.8"
-statrs = "0.16.0"
+crossbeam-queue = "0.3.11"
