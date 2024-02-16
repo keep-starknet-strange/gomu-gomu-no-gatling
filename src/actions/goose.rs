@@ -84,12 +84,14 @@ pub async fn erc20(shooter: &GatlingShooterSetup) -> color_eyre::Result<()> {
                 .register_transaction(
                     Transaction::new(transfer_wait)
                         .set_name("Transfer Finalizing")
-                        .set_sequence(2),
+                        .set_sequence(2)
+                        .set_on_stop(),
                 )
                 .register_transaction(
                     transaction!(verify_transactions)
                         .set_name("Transfer Verification")
-                        .set_sequence(3),
+                        .set_sequence(3)
+                        .set_on_stop(),
                 ),
         )
         .execute()
@@ -103,7 +105,7 @@ pub async fn erc721(shooter: &GatlingShooterSetup) -> color_eyre::Result<()> {
     let environment = shooter.environment()?;
 
     ensure!(
-        config.run.num_erc20_transfers >= config.run.concurrency,
+        config.run.num_erc721_mints >= config.run.concurrency,
         "Too few erc721 mints for the amount of concurrency"
     );
 
@@ -166,12 +168,14 @@ pub async fn erc721(shooter: &GatlingShooterSetup) -> color_eyre::Result<()> {
                 .register_transaction(
                     Transaction::new(mint_wait)
                         .set_name("Mint Finalizing")
-                        .set_sequence(2),
+                        .set_sequence(2)
+                        .set_on_stop(),
                 )
                 .register_transaction(
                     transaction!(verify_transactions)
                         .set_name("Mint Verification")
-                        .set_sequence(3),
+                        .set_sequence(3)
+                        .set_on_stop(),
                 ),
         )
         .execute()
@@ -331,27 +335,31 @@ async fn mint(
 }
 
 async fn verify_transactions(user: &mut GooseUser) -> TransactionResult {
-    let transaction = user
-        .get_session_data_mut::<GooseUserState>()
-        .expect("Should be in a goose user with GooseUserState session data")
-        .prev_tx
-        .pop()
-        .expect("There should be enough previous transactions for every verification");
+    let transactions = mem::take(
+        &mut user
+            .get_session_data_mut::<GooseUserState>()
+            .expect("Should be in a goose user with GooseUserState session data")
+            .prev_tx,
+    );
 
-    let receipt: MaybePendingTransactionReceipt =
-        send_request(user, JsonRpcMethod::GetTransactionReceipt, transaction).await?;
+    for tx in transactions {
+        let receipt: MaybePendingTransactionReceipt =
+            send_request(user, JsonRpcMethod::GetTransactionReceipt, tx).await?;
 
-    match receipt {
-        MaybePendingTransactionReceipt::Receipt(receipt) => match receipt.execution_result() {
-            ExecutionResult::Succeeded => Ok(()),
-            ExecutionResult::Reverted { reason } => {
-                panic!("Transaction {transaction:#064x} has been rejected/reverted: {reason}");
+        match receipt {
+            MaybePendingTransactionReceipt::Receipt(receipt) => match receipt.execution_result() {
+                ExecutionResult::Succeeded => {}
+                ExecutionResult::Reverted { reason } => {
+                    panic!("Transaction {tx:#064x} has been rejected/reverted: {reason}");
+                }
+            },
+            MaybePendingTransactionReceipt::PendingReceipt(_) => {
+                panic!("Transaction {tx:#064x} is pending when no transactions should be")
             }
-        },
-        MaybePendingTransactionReceipt::PendingReceipt(_) => {
-            panic!("Transaction {transaction:#064x} is pending when no transactions should be")
         }
     }
+
+    Ok(())
 }
 
 pub async fn send_execution<T: DeserializeOwned>(
