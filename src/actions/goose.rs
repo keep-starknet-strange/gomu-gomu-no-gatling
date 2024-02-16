@@ -105,7 +105,7 @@ pub async fn erc721(shooter: &GatlingShooterSetup) -> color_eyre::Result<()> {
     let environment = shooter.environment()?;
 
     ensure!(
-        config.run.num_erc20_transfers >= config.run.concurrency,
+        config.run.num_erc721_mints >= config.run.concurrency,
         "Too few erc721 mints for the amount of concurrency"
     );
 
