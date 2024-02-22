@@ -1,5 +1,4 @@
-use std::fmt;
-use std::sync::Arc;
+use std::ops::Deref;
 use std::time::SystemTime;
 
 use color_eyre::{eyre::eyre, Result};
@@ -17,8 +16,6 @@ use starknet::{
 
 use std::time::Duration;
 use sysinfo::{CpuExt, System, SystemExt};
-
-use crate::metrics::{BenchmarkReport, GatlingReport};
 
 lazy_static! {
     pub static ref SYSINFO: SysInfo = SysInfo::new();
@@ -83,35 +80,33 @@ impl SysInfo {
     }
 }
 
+pub fn sysinfo_string() -> String {
+    let SysInfo {
+        os_name,
+        kernel_version,
+        arch,
+        cpu_count,
+        cpu_frequency,
+        cpu_brand,
+        memory,
+    } = SYSINFO.deref();
+
+    let gigabyte_memory = memory / (1024 * 1024 * 1024);
+
+    format!(
+        "CPU Count: {cpu_count}\n\
+        CPU Model: {cpu_brand}\n\
+        CPU Speed (MHz): {cpu_frequency}\n\
+        Total Memory: {gigabyte_memory} GB\n\
+        Platform: {os_name}\n\
+        Release: {kernel_version}\n\
+        Architecture: {arch}",
+    )
+}
+
 impl Default for SysInfo {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-impl fmt::Display for SysInfo {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Self {
-            os_name,
-            kernel_version,
-            arch,
-            cpu_count,
-            cpu_frequency,
-            cpu_brand,
-            memory,
-        } = self;
-
-        let cpu_ghz_freq = *cpu_frequency as f64 / 1000.0;
-        let gigabyte_memory = memory / (1024 * 1024 * 1024);
-
-        writeln!(
-            f,
-            "System Information:\n\
-            System : {os_name} Kernel Version {kernel_version}\n\
-            Arch   : {arch}\n\
-            CPU    : {cpu_brand} {cpu_ghz_freq:.2} GHz {cpu_count} cores\n\
-            Memory : {gigabyte_memory} GB"
-        )
     }
 }
 
@@ -149,7 +144,12 @@ pub async fn wait_for_tx(
                     }
                 }
             }
-            Ok(PendingReceipt(_)) => {
+            Ok(PendingReceipt(pending)) => {
+                if let ExecutionResult::Reverted { reason } = pending.execution_result() {
+                    return Err(eyre!(format!(
+                        "Transaction {tx_hash:#064x} has been rejected/reverted: {reason}"
+                    )));
+                }
                 debug!("Waiting for transaction {tx_hash:#064x} to be accepted");
                 tokio::time::sleep(check_interval).await;
             }
@@ -175,7 +175,7 @@ pub async fn wait_for_tx(
 /// without hitting the StarkNet RPC multiple times
 // TODO: add a cache to avoid hitting the RPC for the same block
 pub async fn get_num_tx_per_block(
-    starknet_rpc: Arc<JsonRpcClient<HttpTransport>>,
+    starknet_rpc: &JsonRpcClient<HttpTransport>,
     start_block: u64,
     end_block: u64,
 ) -> Result<Vec<u64>> {
@@ -219,44 +219,4 @@ pub fn sanitize_filename(input: &str) -> String {
     };
 
     truncated.to_string()
-}
-
-#[derive(Debug)]
-pub enum BenchmarkType {
-    BlockRange(u64, u64),
-    LatestBlocks(u64),
-}
-
-/// Builds a benchmark report for the given benchmark name and block range
-pub async fn build_benchmark_report(
-    starknet_rpc: Arc<JsonRpcClient<HttpTransport>>,
-    benchmark_name: String,
-    benchmark_type: BenchmarkType,
-    gatling_report: &mut GatlingReport,
-) -> Result<BenchmarkReport> {
-    let benchmark_report = match benchmark_type {
-        BenchmarkType::BlockRange(start, end) => {
-            BenchmarkReport::from_block_range(
-                starknet_rpc.clone(),
-                benchmark_name.clone(),
-                start,
-                end,
-            )
-            .await?
-        }
-        BenchmarkType::LatestBlocks(num_blocks) => {
-            BenchmarkReport::from_last_x_blocks(
-                starknet_rpc.clone(),
-                benchmark_name.clone(),
-                num_blocks,
-            )
-            .await?
-        }
-    };
-
-    gatling_report
-        .benchmark_reports
-        .push(benchmark_report.clone());
-
-    Ok(benchmark_report)
 }

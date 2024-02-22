@@ -85,11 +85,12 @@ The configuration is defined by the following spec
 
   - `num_erc20_transfers`: Number of ERC20 `transfer` transactions
   - `num_erc721_mints`: Number of ERC721 `mint` transactions
+  - `concurrency`: How many transactions to do simultaneously
 
 - `report`
 
   - `num_blocks`: Number of last blocks to take into account in the report
-  - `reports_dir`: Path to the directory where to save the reports
+  - `location`: Path to the file where to save the reports
 
 - `deployer`
 
@@ -102,6 +103,35 @@ The configuration is defined by the following spec
 ```bash
 gatling shoot -c config/default.yaml
 ```
+
+### Output
+
+The main output of gomu gomu is the report location specified in specified in the configuration file.
+
+At the end of all benchmarks gomu gomu will collect the results into a single json file with the following structure:
+
+- `users`: The amount of goose users used to do the benchmarks, changed by `concurrency`
+
+- `all_bench_report`: A report over all benchmarks done
+
+- `benches`: A array of reports for all benchmarks
+  
+  - `name`: The name of the benchmark
+  - `amount`: How many times this benchmark was ran
+  - `metrics`: An array of benchmark metrics over the whole benchmark
+
+    - `name`: The name of the metric
+    - `unit`: The unit of the metric, empty when there is no unit
+    - `value`: The metrics value, a number
+    
+      - For floats, `Infinite` and `NaN` are not JSON numbers and thus will be turned into `null`
+
+  - `last_x_blocks_metrics`: An array of benchmark metrics over the last metrics, changed by `num_blocks`
+
+- `extra`: Extra information for this run
+
+
+Gomu gomu will also display into the console information about each step in the benchmark.
 
 ## Resources
 
