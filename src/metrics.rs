@@ -59,7 +59,13 @@ pub struct BenchmarkReport {
     pub amount: usize,
     pub metrics: Vec<MetricResult>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_x_blocks_metrics: Option<Vec<MetricResult>>,
+    pub last_x_blocks_metrics: Option<LastXBlocksMetric>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LastXBlocksMetric {
+    pub num_blocks: u64,
+    pub metrics: Vec<MetricResult>,
 }
 
 impl BenchmarkReport {
@@ -105,7 +111,10 @@ impl BenchmarkReport {
         let num_tx_per_block = get_num_tx_per_block(starknet_rpc, start_block, end_block).await?;
         let metrics = compute_node_metrics(num_tx_per_block).to_vec();
 
-        self.last_x_blocks_metrics = Some(metrics);
+        self.last_x_blocks_metrics = Some(LastXBlocksMetric {
+            num_blocks,
+            metrics,
+        });
 
         Ok(())
     }
@@ -179,7 +188,8 @@ impl BenchmarkReport {
             MetricResult {
                 name: "Mean Verification Time",
                 unit: "milliseconds",
-                value: (verification_requests.raw_data.total_time as f64 / scenario.counter as f64).into(),
+                value: (verification_requests.raw_data.total_time as f64 / scenario.counter as f64)
+                    .into(),
             },
         ]);
 
@@ -211,11 +221,9 @@ impl fmt::Display for BenchmarkReport {
         }
 
         if let Some(last_x_blocks) = last_x_blocks {
-            let len = last_x_blocks.len();
+            writeln!(f, "Last {} block metrics:", last_x_blocks.num_blocks)?;
 
-            writeln!(f, "Last {len} block metrics:")?;
-
-            for metric in last_x_blocks {
+            for metric in &last_x_blocks.metrics {
                 writeln!(f, "{metric}")?;
             }
         }

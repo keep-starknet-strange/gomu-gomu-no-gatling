@@ -115,21 +115,23 @@ At the end of all benchmarks gomu gomu will collect the results into a single js
 - `all_bench_report`: A report over all benchmarks done
 
 - `benches`: A array of reports for all benchmarks
-  
+
   - `name`: The name of the benchmark
   - `amount`: How many times this benchmark was ran
-  - `metrics`: An array of benchmark metrics over the whole benchmark
+  - `metrics`: An array of metrics over the whole benchmark
 
     - `name`: The name of the metric
     - `unit`: The unit of the metric, empty when there is no unit
     - `value`: The metrics value, a number
-    
+
       - For floats, `Infinite` and `NaN` are not JSON numbers and thus will be turned into `null`
 
-  - `last_x_blocks_metrics`: An array of benchmark metrics over the last metrics, changed by `num_blocks`
+  - `last_x_blocks_metrics`: Metrics over the last blocks of the benchmark
+
+    - `num_blocks`: The amount of last transactions that were measured
+    - `metrics`: An array of metrics
 
 - `extra`: Extra information for this run
-
 
 Gomu gomu will also display into the console information about each step in the benchmark.
 
