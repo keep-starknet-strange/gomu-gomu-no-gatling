@@ -83,7 +83,7 @@ pub async fn erc20(shooter: &GatlingShooterSetup) -> color_eyre::Result<GooseMet
                 )
                 .register_transaction(
                     Transaction::new(transfer)
-                        .set_name("Transfer")
+                        .set_name("Transaction Submission")
                         .set_sequence(1),
                 )
                 .register_transaction(
@@ -169,7 +169,11 @@ pub async fn erc721(shooter: &GatlingShooterSetup) -> color_eyre::Result<GooseMe
                         .set_name("Mint Setup")
                         .set_on_start(),
                 )
-                .register_transaction(Transaction::new(mint).set_name("Minting").set_sequence(1))
+                .register_transaction(
+                    Transaction::new(mint)
+                        .set_name("Transaction Submission")
+                        .set_sequence(1),
+                )
                 .register_transaction(
                     Transaction::new(mint_wait)
                         .set_name("Mint Finalizing")

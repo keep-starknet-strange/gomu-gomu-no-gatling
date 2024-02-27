@@ -1,14 +1,19 @@
-use crate::utils::get_num_tx_per_block;
+use crate::utils::get_blocks_with_txs;
 
 use color_eyre::{
-    eyre::{bail, eyre},
+    eyre::{bail, OptionExt},
     Result,
 };
 
-use goose::metrics::GooseMetrics;
+use goose::metrics::{GooseMetrics, GooseRequestMetricTimingData};
 use serde_derive::Serialize;
-use starknet::providers::{jsonrpc::HttpTransport, JsonRpcClient, Provider};
-use std::fmt;
+use starknet::{
+    core::types::{
+        BlockWithTxs, InvokeTransaction, InvokeTransactionV0, InvokeTransactionV1, Transaction,
+    },
+    providers::{jsonrpc::HttpTransport, JsonRpcClient, Provider},
+};
+use std::{fmt, sync::Arc};
 
 pub const BLOCK_TIME: u64 = 6;
 
@@ -26,7 +31,7 @@ pub struct WholeReport {
 /// and returns the metric value as a f64
 /// The name and unit are used for displaying the metric
 ///
-/// ### Example
+/// ### Example
 /// { name: "Average TPS", unit: "transactions/second", compute: average_tps }
 /// "Average TPS: 1000 transactions/second"
 #[derive(PartialEq, Eq, Hash, Clone)]
@@ -80,7 +85,7 @@ impl BenchmarkReport {
 
     pub async fn with_block_range(
         &mut self,
-        starknet_rpc: &JsonRpcClient<HttpTransport>,
+        starknet_rpc: &Arc<JsonRpcClient<HttpTransport>>,
         mut start_block: u64,
         mut end_block: u64,
     ) -> Result<()> {
@@ -91,8 +96,8 @@ impl BenchmarkReport {
             end_block -= 1;
         }
 
-        let num_tx_per_block = get_num_tx_per_block(starknet_rpc, start_block, end_block).await?;
-        let metrics = compute_node_metrics(num_tx_per_block);
+        let blocks_with_txs = get_blocks_with_txs(starknet_rpc, start_block..=end_block).await?;
+        let metrics = compute_node_metrics(&blocks_with_txs)?;
 
         self.metrics.extend_from_slice(&metrics);
 
@@ -101,15 +106,15 @@ impl BenchmarkReport {
 
     pub async fn with_last_x_blocks(
         &mut self,
-        starknet_rpc: &JsonRpcClient<HttpTransport>,
+        starknet_rpc: &Arc<JsonRpcClient<HttpTransport>>,
         num_blocks: u64,
     ) -> Result<()> {
         // The last block won't be full of transactions, so we skip it
         let end_block = starknet_rpc.block_number().await? - 1;
         let start_block = end_block - num_blocks;
 
-        let num_tx_per_block = get_num_tx_per_block(starknet_rpc, start_block, end_block).await?;
-        let metrics = compute_node_metrics(num_tx_per_block).to_vec();
+        let blocks_with_txs = get_blocks_with_txs(starknet_rpc, start_block..=end_block).await?;
+        let metrics = compute_node_metrics(&blocks_with_txs)?;
 
         self.last_x_blocks_metrics = Some(LastXBlocksMetric {
             num_blocks,
@@ -120,30 +125,30 @@ impl BenchmarkReport {
     }
 
     pub fn with_goose_metrics(&mut self, metrics: &GooseMetrics) -> Result<()> {
-        let scenario = metrics
-            .scenarios
-            .first()
-            .ok_or(eyre!("There is no scenario"))?;
-
         let transactions = metrics
             .transactions
             .first()
-            .ok_or(eyre!("Could no find scenario's transactions"))?;
+            .ok_or_eyre("Could no find scenario's transactions")?;
 
-        let [_setup, requests, _finalizing, verification] = transactions.as_slice() else {
+        let [_setup, submission, _finalizing, verification] = transactions.as_slice() else {
             bail!("Failed at getting all transaction aggragates")
         };
+
+        let submission_requests = metrics
+            .requests
+            .get("POST Transaction Submission")
+            .ok_or_eyre("Found no submission request metrics")?;
 
         let verification_requests = metrics
             .requests
             .get("POST Verification")
-            .ok_or(eyre!("Found no verification request metrics"))?;
+            .ok_or_eyre("Found no verification request metrics")?;
 
         self.metrics.extend_from_slice(&[
             MetricResult {
                 name: "Total Submission Time",
                 unit: "milliseconds",
-                value: requests.total_time.into(),
+                value: submission_requests.raw_data.total_time.into(),
             },
             MetricResult {
                 name: "Total Verification Time",
@@ -158,22 +163,24 @@ impl BenchmarkReport {
             MetricResult {
                 name: "Failed Transaction Submissions",
                 unit: "",
-                value: requests.fail_count.into(),
+                value: submission.fail_count.into(),
             },
             MetricResult {
                 name: "Max Submission Time",
                 unit: "milliseconds",
-                value: requests.max_time.into(),
+                value: submission_requests.raw_data.maximum_time.into(),
             },
             MetricResult {
                 name: "Min Submission Time",
                 unit: "milliseconds",
-                value: requests.min_time.into(),
+                value: submission_requests.raw_data.minimum_time.into(),
             },
             MetricResult {
                 name: "Mean Submission Time",
                 unit: "milliseconds",
-                value: (requests.total_time as f64 / scenario.counter as f64).into(),
+                value: (submission_requests.raw_data.total_time as f64
+                    / submission_requests.success_count as f64)
+                    .into(),
             },
             MetricResult {
                 name: "Max Verification Time",
@@ -188,13 +195,63 @@ impl BenchmarkReport {
             MetricResult {
                 name: "Mean Verification Time",
                 unit: "milliseconds",
-                value: (verification_requests.raw_data.total_time as f64 / scenario.counter as f64)
+                value: (verification_requests.raw_data.total_time as f64
+                    / verification_requests.success_count as f64)
                     .into(),
             },
         ]);
 
+        if let Some((sub_p50, sub_90)) = calculate_p50_and_p90(&submission_requests.raw_data) {
+            self.metrics.extend_from_slice(&[
+                MetricResult {
+                    name: "P90 Submission Time",
+                    unit: "milliseconds",
+                    value: sub_90.into(),
+                },
+                MetricResult {
+                    name: "P50 Submission Time",
+                    unit: "milliseconds",
+                    value: sub_p50.into(),
+                },
+            ])
+        }
+
+        if let Some((ver_p50, ver_p90)) = calculate_p50_and_p90(&verification_requests.raw_data) {
+            self.metrics.extend_from_slice(&[
+                MetricResult {
+                    name: "P90 Verification Time",
+                    unit: "milliseconds",
+                    value: ver_p90.into(),
+                },
+                MetricResult {
+                    name: "P50 Verification Time",
+                    unit: "milliseconds",
+                    value: ver_p50.into(),
+                },
+            ])
+        }
+
         Ok(())
     }
+}
+
+fn calculate_p50_and_p90(timing_data: &GooseRequestMetricTimingData) -> Option<(usize, usize)> {
+    let p50_idx = (timing_data.counter * 50) / 100;
+
+    let p90_idx = (timing_data.counter * 90) / 100;
+
+    let mut ordered_times = timing_data
+        .times
+        .iter()
+        .flat_map(|(time, &amount)| std::iter::repeat(time).take(amount));
+
+    // These should only return None when there is only 1 or 0 times in the data
+    let &p50 = ordered_times.nth(p50_idx)?;
+
+    // p50 already iterated some out, so we subtract it's idx from here
+    let &p90 = ordered_times.nth(p90_idx - p50_idx)?;
+
+    Some((p50, p90))
 }
 
 impl fmt::Display for MetricResult {
@@ -232,25 +289,60 @@ impl fmt::Display for BenchmarkReport {
     }
 }
 
-pub fn compute_node_metrics(num_tx_per_block: Vec<u64>) -> [MetricResult; 2] {
-    [
+pub fn compute_node_metrics(blocks_with_txs: &[BlockWithTxs]) -> Result<Vec<MetricResult>> {
+    let total_transactions: usize = blocks_with_txs.iter().map(|b| b.transactions.len()).sum();
+    let avg_tpb = total_transactions as f64 / blocks_with_txs.len() as f64;
+
+    let mut metrics = vec![
         MetricResult {
             name: "Average TPS",
             unit: "transactions/second",
-            value: average_tps(&num_tx_per_block).into(),
+            value: (avg_tpb / BLOCK_TIME as f64).into(),
         },
         MetricResult {
             name: "Average Extrinsics per block",
             unit: "extrinsics/block",
-            value: average_tpb(&num_tx_per_block).into(),
+            value: avg_tpb.into(),
         },
-    ]
+    ];
+
+    let first_block = blocks_with_txs.first().ok_or_eyre("No first block")?;
+    let last_block = blocks_with_txs.last().ok_or_eyre("No last block")?;
+
+    if first_block.timestamp != last_block.timestamp {
+        let time = last_block.timestamp - first_block.timestamp;
+
+        let total_uops: u64 = blocks_with_txs
+            .iter()
+            .skip(1) // Skip first block as its creation time is the start time for this metric
+            .flat_map(|b| &b.transactions)
+            .map(tx_get_user_operations)
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .sum();
+
+        metrics.push(MetricResult {
+            name: "Average UOPS",
+            unit: "operations/second",
+            value: (total_uops as f64 / time as f64).into(),
+        })
+    }
+
+    Ok(metrics)
 }
 
-fn average_tps(num_tx_per_block: &[u64]) -> f64 {
-    average_tpb(num_tx_per_block) / BLOCK_TIME as f64
-}
+fn tx_get_user_operations(tx: &Transaction) -> Result<u64> {
+    Ok(match tx {
+        Transaction::Invoke(
+            InvokeTransaction::V0(InvokeTransactionV0 { calldata, .. })
+            | InvokeTransaction::V1(InvokeTransactionV1 { calldata, .. }),
+        ) => {
+            let &user_operations = calldata
+                .first()
+                .ok_or_eyre("Expected calldata to have at least one field element")?;
 
-fn average_tpb(num_tx_per_block: &[u64]) -> f64 {
-    num_tx_per_block.iter().sum::<u64>() as f64 / num_tx_per_block.len() as f64
+            user_operations.try_into()?
+        }
+        _ => bail!("Unexpected transaction type when getting"),
+    })
 }

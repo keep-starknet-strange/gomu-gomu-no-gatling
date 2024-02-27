@@ -1,11 +1,15 @@
 use std::ops::Deref;
+use std::sync::Arc;
 use std::time::SystemTime;
 
+use color_eyre::eyre::{bail, OptionExt};
 use color_eyre::{eyre::eyre, Result};
 use lazy_static::lazy_static;
 use log::debug;
 
-use starknet::core::types::{BlockId, ExecutionResult, StarknetError};
+use starknet::core::types::{
+    BlockId, BlockWithTxs, ExecutionResult, MaybePendingBlockWithTxs, StarknetError,
+};
 use starknet::core::{crypto::compute_hash_on_elements, types::FieldElement};
 use starknet::providers::{jsonrpc::HttpTransport, JsonRpcClient, Provider};
 use starknet::providers::{MaybeUnknownErrorCode, ProviderError};
@@ -13,6 +17,7 @@ use starknet::{
     core::types::MaybePendingTransactionReceipt::{PendingReceipt, Receipt},
     providers::StarknetErrorWithMessage,
 };
+use tokio::task::JoinSet;
 
 use std::time::Duration;
 use sysinfo::{CpuExt, System, SystemExt};
@@ -169,27 +174,54 @@ pub async fn wait_for_tx(
     }
 }
 
-/// Get a Map of the number of transactions per block from `start_block` to
-/// `end_block` (including both)
-/// This is meant to be used to calculate multiple metrics such as TPS and TPB
+/// Get a list of blocks with transaction information from
+/// `start_block` to `end_block` (including both)
+/// This is meant to be used to calculate multiple metrics such as TPS and UOPS
 /// without hitting the StarkNet RPC multiple times
-// TODO: add a cache to avoid hitting the RPC for the same block
-pub async fn get_num_tx_per_block(
-    starknet_rpc: &JsonRpcClient<HttpTransport>,
-    start_block: u64,
-    end_block: u64,
-) -> Result<Vec<u64>> {
-    let mut num_tx_per_block = Vec::new();
+pub async fn get_blocks_with_txs(
+    starknet_rpc: &Arc<JsonRpcClient<HttpTransport>>,
+    block_range: impl Iterator<Item = u64>,
+) -> Result<Vec<BlockWithTxs>> {
+    const MAX_CONCURRENT: usize = 50;
 
-    for block_number in start_block..=end_block {
-        let n = starknet_rpc
-            .get_block_transaction_count(BlockId::Number(block_number))
-            .await?;
+    // A collection of spawned tokio tasks
+    let mut join_set = JoinSet::new();
 
-        num_tx_per_block.push(n);
+    let mut results = Vec::with_capacity(block_range.size_hint().0);
+
+    for block_number in block_range {
+        // Make sure we don't hit dev server with too many requests
+        while join_set.len() >= MAX_CONCURRENT {
+            let next = join_set
+                .join_next()
+                .await
+                .ok_or_eyre("JoinSet should have items")???;
+
+            results.push(match_result(next)?);
+        }
+
+        let starknet_rpc = starknet_rpc.clone();
+
+        join_set.spawn(async move {
+            starknet_rpc
+                .get_block_with_txs(BlockId::Number(block_number))
+                .await
+        });
     }
 
-    Ok(num_tx_per_block)
+    // Process the rest
+    while let Some(next) = join_set.join_next().await {
+        results.push(match_result(next??)?)
+    }
+
+    fn match_result(maybe_block: MaybePendingBlockWithTxs) -> Result<BlockWithTxs> {
+        match maybe_block {
+            MaybePendingBlockWithTxs::Block(block) => Ok(block),
+            MaybePendingBlockWithTxs::PendingBlock(_) => bail!("Blocks should not be pending!"),
+        }
+    }
+
+    Ok(results)
 }
 
 /// Sanitize a string to be used as a filename by removing/replacing illegal chars

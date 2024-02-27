@@ -1,6 +1,6 @@
 use crate::config::{ContractSourceConfig, GatlingConfig};
 use crate::utils::{compute_contract_address, wait_for_tx};
-use color_eyre::eyre::Context;
+use color_eyre::eyre::{Context, OptionExt};
 use color_eyre::{eyre::eyre, Result};
 
 use log::{debug, info, warn};
@@ -86,9 +86,9 @@ impl GatlingShooterSetup {
     }
 
     pub fn environment(&self) -> Result<&GatlingEnvironment> {
-        self.environment.as_ref().ok_or(eyre!(
-            "Environment is not yet populated, you should run the setup function first"
-        ))
+        self.environment
+            .as_ref()
+            .ok_or_eyre("Environment is not yet populated, you should run the setup function first")
     }
 
     pub fn config(&self) -> &GatlingConfig {
