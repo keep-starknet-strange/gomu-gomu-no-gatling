@@ -336,13 +336,14 @@ fn tx_get_user_operations(tx: &Transaction) -> Result<u64> {
         Transaction::Invoke(
             InvokeTransaction::V0(InvokeTransactionV0 { calldata, .. })
             | InvokeTransaction::V1(InvokeTransactionV1 { calldata, .. }),
-        ) => {
+        )
+        | Transaction::L1Handler(L1HandlerTransaction { calldata, .. }) => {
             let &user_operations = calldata
                 .first()
                 .ok_or_eyre("Expected calldata to have at least one field element")?;
 
             user_operations.try_into()?
         }
-        _ => bail!("Unexpected transaction type when getting"),
+        _ => 1 // Other txs can be considered as 1 uop
     })
 }
