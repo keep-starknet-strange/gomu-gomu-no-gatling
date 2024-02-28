@@ -20,7 +20,7 @@ use starknet::{
 use tokio::task::JoinSet;
 
 use std::time::Duration;
-use sysinfo::{CpuExt, System, SystemExt};
+use sysinfo::System;
 
 lazy_static! {
     pub static ref SYSINFO: SysInfo = SysInfo::new();
@@ -74,8 +74,8 @@ impl SysInfo {
         let cpu = sys.global_cpu_info();
 
         Self {
-            os_name: sys.long_os_version().unwrap().trim().to_string(),
-            kernel_version: sys.kernel_version().unwrap(),
+            os_name: System::long_os_version().unwrap().trim().to_string(),
+            kernel_version: System::kernel_version().unwrap(),
             arch: std::env::consts::ARCH.to_string(),
             cpu_count: sys.cpus().len(),
             cpu_frequency: cpu.frequency(),
