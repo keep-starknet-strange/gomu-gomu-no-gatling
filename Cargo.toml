@@ -31,6 +31,5 @@ serde_json = { version = "1.0.96", features = ["preserve_order"] }
 url = "2.4.0"
 rand = { version = "0.8.5", features = ["rand_chacha"] }
 lazy_static = "1.4.0"
-colored = "2.0.4"
 sysinfo = "0.29.8"
 crossbeam-queue = "0.3.11"
