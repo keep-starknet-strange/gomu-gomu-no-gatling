@@ -1,4 +1,6 @@
-use starknet::providers::Provider;
+use ::goose::metrics::GooseMetrics;
+use futures::Future;
+use starknet::providers::{jsonrpc::HttpTransport, JsonRpcClient, Provider};
 
 use crate::{
     config::GatlingConfig,
@@ -30,24 +32,13 @@ pub async fn shoot(config: GatlingConfig) -> color_eyre::Result<()> {
     let start_block = shooter.rpc_client().block_number().await?;
 
     if run_erc20 {
-        let start_block = shooter.rpc_client().block_number().await?;
-        let goose_metrics = goose::erc20(&shooter).await?;
-        let end_block = shooter.rpc_client().block_number().await?;
-
-        let mut report =
-            BenchmarkReport::new("Erc20 Transfers", goose_metrics.scenarios[0].counter);
-
-        report
-            .with_block_range(shooter.rpc_client(), start_block + 1, end_block)
-            .await?;
-
-        if config.report.num_blocks != 0 {
-            report
-                .with_last_x_blocks(shooter.rpc_client(), config.report.num_blocks)
-                .await?;
-        }
-
-        report.with_goose_metrics(&goose_metrics)?;
+        let report = make_report_over_bench(
+            goose::erc20(&shooter),
+            "Erc20 Transfers",
+            shooter.rpc_client(),
+            config.report.num_blocks,
+        )
+        .await?;
 
         whole_report.benches.push(report);
     } else {
@@ -55,23 +46,13 @@ pub async fn shoot(config: GatlingConfig) -> color_eyre::Result<()> {
     }
 
     if run_erc721 {
-        let start_block = shooter.rpc_client().block_number().await?;
-        let goose_metrics = goose::erc721(&shooter).await?;
-        let end_block = shooter.rpc_client().block_number().await?;
-
-        let mut report = BenchmarkReport::new("Erc721 Mints", goose_metrics.scenarios[0].counter);
-
-        report
-            .with_block_range(shooter.rpc_client(), start_block + 1, end_block)
-            .await?;
-
-        if config.report.num_blocks != 0 {
-            report
-                .with_last_x_blocks(shooter.rpc_client(), config.report.num_blocks)
-                .await?;
-        }
-
-        report.with_goose_metrics(&goose_metrics)?;
+        let report = make_report_over_bench(
+            goose::erc721(&shooter),
+            "Erc721 Mints",
+            shooter.rpc_client(),
+            config.report.num_blocks,
+        )
+        .await?;
 
         whole_report.benches.push(report);
     } else {
@@ -91,4 +72,27 @@ pub async fn shoot(config: GatlingConfig) -> color_eyre::Result<()> {
     serde_json::to_writer_pretty(writer, &whole_report)?;
 
     Ok(())
+}
+
+async fn make_report_over_bench(
+    bench: impl Future<Output = color_eyre::Result<GooseMetrics>>,
+    name: &'static str,
+    rpc_client: &JsonRpcClient<HttpTransport>,
+    num_blocks: u64,
+) -> color_eyre::Result<BenchmarkReport> {
+    let start_block = rpc_client.block_number().await?;
+    let goose_metrics = bench.await?;
+    let end_block = rpc_client.block_number().await?;
+
+    let mut report = BenchmarkReport::new(name, goose_metrics.scenarios[0].counter);
+    report
+        .with_block_range(rpc_client, start_block + 1, end_block)
+        .await?;
+
+    if num_blocks != 0 {
+        report.with_last_x_blocks(rpc_client, num_blocks).await?;
+    }
+
+    report.with_goose_metrics(&goose_metrics)?;
+    Ok(report)
 }
