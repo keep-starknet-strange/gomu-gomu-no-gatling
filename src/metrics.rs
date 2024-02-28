@@ -176,7 +176,7 @@ impl BenchmarkReport {
                 value: submission_requests.raw_data.minimum_time.into(),
             },
             MetricResult {
-                name: "Mean Submission Time",
+                name: "Average Submission Time",
                 unit: "milliseconds",
                 value: (submission_requests.raw_data.total_time as f64
                     / submission_requests.success_count as f64)
@@ -193,7 +193,7 @@ impl BenchmarkReport {
                 value: verification_requests.raw_data.minimum_time.into(),
             },
             MetricResult {
-                name: "Mean Verification Time",
+                name: "Average Verification Time",
                 unit: "milliseconds",
                 value: (verification_requests.raw_data.total_time as f64
                     / verification_requests.success_count as f64)
