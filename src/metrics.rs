@@ -171,7 +171,7 @@ impl BenchmarkReport {
                 value: requests.min_time.into(),
             },
             MetricResult {
-                name: "Mean Submission Time",
+                name: "Average Submission Time",
                 unit: "milliseconds",
                 value: (requests.total_time as f64 / scenario.counter as f64).into(),
             },
@@ -186,7 +186,7 @@ impl BenchmarkReport {
                 value: verification_requests.raw_data.minimum_time.into(),
             },
             MetricResult {
-                name: "Mean Verification Time",
+                name: "Average Verification Time",
                 unit: "milliseconds",
                 value: (verification_requests.raw_data.total_time as f64 / scenario.counter as f64)
                     .into(),
