@@ -9,7 +9,8 @@ use goose::metrics::{GooseMetrics, GooseRequestMetricTimingData};
 use serde_derive::Serialize;
 use starknet::{
     core::types::{
-        BlockWithTxs, InvokeTransaction, InvokeTransactionV0, InvokeTransactionV1, Transaction,
+        BlockWithTxs, ExecutionResources, InvokeTransaction, InvokeTransactionV0,
+        InvokeTransactionV1, L1HandlerTransaction, Transaction,
     },
     providers::{jsonrpc::HttpTransport, JsonRpcClient, Provider},
 };
@@ -97,7 +98,7 @@ impl BenchmarkReport {
         }
 
         let blocks_with_txs = get_blocks_with_txs(starknet_rpc, start_block..=end_block).await?;
-        let metrics = compute_node_metrics(&blocks_with_txs)?;
+        let metrics = compute_node_metrics(blocks_with_txs)?;
 
         self.metrics.extend_from_slice(&metrics);
 
@@ -114,7 +115,7 @@ impl BenchmarkReport {
         let start_block = end_block - num_blocks;
 
         let blocks_with_txs = get_blocks_with_txs(starknet_rpc, start_block..=end_block).await?;
-        let metrics = compute_node_metrics(&blocks_with_txs)?;
+        let metrics = compute_node_metrics(blocks_with_txs)?;
 
         self.last_x_blocks_metrics = Some(LastXBlocksMetric {
             num_blocks,
@@ -289,8 +290,13 @@ impl fmt::Display for BenchmarkReport {
     }
 }
 
-pub fn compute_node_metrics(blocks_with_txs: &[BlockWithTxs]) -> Result<Vec<MetricResult>> {
-    let total_transactions: usize = blocks_with_txs.iter().map(|b| b.transactions.len()).sum();
+pub fn compute_node_metrics(
+    blocks_with_txs: Vec<(BlockWithTxs, Vec<ExecutionResources>)>,
+) -> Result<Vec<MetricResult>> {
+    let total_transactions: usize = blocks_with_txs
+        .iter()
+        .map(|(b, _)| b.transactions.len())
+        .sum();
     let avg_tpb = total_transactions as f64 / blocks_with_txs.len() as f64;
 
     let mut metrics = vec![
@@ -306,8 +312,8 @@ pub fn compute_node_metrics(blocks_with_txs: &[BlockWithTxs]) -> Result<Vec<Metr
         },
     ];
 
-    let first_block = blocks_with_txs.first().ok_or_eyre("No first block")?;
-    let last_block = blocks_with_txs.last().ok_or_eyre("No last block")?;
+    let (first_block, _) = blocks_with_txs.first().ok_or_eyre("No first block")?;
+    let (last_block, _) = blocks_with_txs.last().ok_or_eyre("No last block")?;
 
     if first_block.timestamp != last_block.timestamp {
         let time = last_block.timestamp - first_block.timestamp;
@@ -315,17 +321,30 @@ pub fn compute_node_metrics(blocks_with_txs: &[BlockWithTxs]) -> Result<Vec<Metr
         let total_uops: u64 = blocks_with_txs
             .iter()
             .skip(1) // Skip first block as its creation time is the start time for this metric
-            .flat_map(|b| &b.transactions)
+            .flat_map(|(b, _)| &b.transactions)
             .map(tx_get_user_operations)
             .collect::<Result<Vec<_>, _>>()?
             .into_iter()
+            .sum();
+
+        let total_steps: u64 = blocks_with_txs
+            .iter()
+            .skip(1)
+            .flat_map(|(_, r)| r)
+            .map(|resource| resource.steps)
             .sum();
 
         metrics.push(MetricResult {
             name: "Average UOPS",
             unit: "operations/second",
             value: (total_uops as f64 / time as f64).into(),
-        })
+        });
+
+        metrics.push(MetricResult {
+            name: "Average Steps Per Second",
+            unit: "operations/second",
+            value: (total_steps as f64 / time as f64).into(),
+        });
     }
 
     Ok(metrics)

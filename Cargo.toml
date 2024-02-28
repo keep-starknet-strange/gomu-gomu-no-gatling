@@ -13,8 +13,9 @@ description = "Gomu Gomu No Gatling is a blazing fast tool to benchmark Starknet
 opt-level = 3
 
 [dependencies]
-# Starknet dependencies
-starknet = "0.6.0"
+# Starknet dependencies, currently the same starknet revision as the one in
+# madara https://github.com/keep-starknet-strange/madara/blob/main/Cargo.toml#L268
+starknet = { git = "https://github.com/xJonathanLEI/starknet-rs.git", rev = "64ebc36" }
 
 goose = "0.17.2"
 env_logger = "0.11.2"

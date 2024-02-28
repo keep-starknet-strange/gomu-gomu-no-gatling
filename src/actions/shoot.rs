@@ -18,9 +18,8 @@ use starknet::core::types::{
     contract::legacy::LegacyContractClass, BlockId, BlockTag, FieldElement, StarknetError,
 };
 use starknet::macros::{felt, selector};
-use starknet::providers::ProviderError;
 use starknet::providers::{jsonrpc::HttpTransport, JsonRpcClient, Provider};
-use starknet::providers::{MaybeUnknownErrorCode, StarknetErrorWithMessage};
+use starknet::providers::{MaybeUnknownErrorCode, ProviderError, StarknetErrorWithMessage};
 use starknet::signers::{LocalWallet, SigningKey};
 use std::str;
 use std::sync::Arc;

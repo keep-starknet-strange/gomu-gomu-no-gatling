@@ -7,16 +7,14 @@ use color_eyre::{eyre::eyre, Result};
 use lazy_static::lazy_static;
 use log::debug;
 
+use starknet::core::types::MaybePendingTransactionReceipt::{PendingReceipt, Receipt};
 use starknet::core::types::{
-    BlockId, BlockWithTxs, ExecutionResult, MaybePendingBlockWithTxs, StarknetError,
+    BlockId, BlockWithTxs, ExecutionResources, ExecutionResult, MaybePendingBlockWithTxs,
+    StarknetError, TransactionReceipt,
 };
 use starknet::core::{crypto::compute_hash_on_elements, types::FieldElement};
 use starknet::providers::{jsonrpc::HttpTransport, JsonRpcClient, Provider};
-use starknet::providers::{MaybeUnknownErrorCode, ProviderError};
-use starknet::{
-    core::types::MaybePendingTransactionReceipt::{PendingReceipt, Receipt},
-    providers::StarknetErrorWithMessage,
-};
+use starknet::providers::{MaybeUnknownErrorCode, ProviderError, StarknetErrorWithMessage};
 use tokio::task::JoinSet;
 
 use std::time::Duration;
@@ -181,7 +179,7 @@ pub async fn wait_for_tx(
 pub async fn get_blocks_with_txs(
     starknet_rpc: &Arc<JsonRpcClient<HttpTransport>>,
     block_range: impl Iterator<Item = u64>,
-) -> Result<Vec<BlockWithTxs>> {
+) -> Result<Vec<(BlockWithTxs, Vec<ExecutionResources>)>> {
     const MAX_CONCURRENT: usize = 50;
 
     // A collection of spawned tokio tasks
@@ -197,28 +195,59 @@ pub async fn get_blocks_with_txs(
                 .await
                 .ok_or_eyre("JoinSet should have items")???;
 
-            results.push(match_result(next)?);
+            results.push(next);
         }
 
         let starknet_rpc = starknet_rpc.clone();
 
-        join_set.spawn(async move {
-            starknet_rpc
-                .get_block_with_txs(BlockId::Number(block_number))
-                .await
-        });
+        join_set.spawn(get_block_info(starknet_rpc, block_number));
     }
 
     // Process the rest
     while let Some(next) = join_set.join_next().await {
-        results.push(match_result(next??)?)
+        results.push(next??)
     }
 
-    fn match_result(maybe_block: MaybePendingBlockWithTxs) -> Result<BlockWithTxs> {
-        match maybe_block {
-            MaybePendingBlockWithTxs::Block(block) => Ok(block),
-            MaybePendingBlockWithTxs::PendingBlock(_) => bail!("Blocks should not be pending!"),
+    async fn get_block_info(
+        starknet_rpc: Arc<JsonRpcClient<HttpTransport>>,
+        block_number: u64,
+    ) -> Result<(BlockWithTxs, Vec<ExecutionResources>)> {
+        let block_with_txs = match starknet_rpc
+            .get_block_with_txs(BlockId::Number(block_number))
+            .await?
+        {
+            MaybePendingBlockWithTxs::Block(b) => b,
+            MaybePendingBlockWithTxs::PendingBlock(pending) => {
+                bail!("Block should not be pending. Pending: {pending:?}")
+            }
+        };
+
+        let mut resources = Vec::with_capacity(block_with_txs.transactions.len());
+
+        for tx in block_with_txs.transactions.iter() {
+            let maybe_receipt = starknet_rpc
+                .get_transaction_receipt(tx.transaction_hash())
+                .await?;
+
+            use TransactionReceipt as TR;
+
+            let resource = match maybe_receipt {
+                Receipt(receipt) => match receipt {
+                    TR::Invoke(receipt) => receipt.execution_resources,
+                    TR::L1Handler(receipt) => receipt.execution_resources,
+                    TR::Declare(receipt) => receipt.execution_resources,
+                    TR::Deploy(receipt) => receipt.execution_resources,
+                    TR::DeployAccount(receipt) => receipt.execution_resources,
+                },
+                PendingReceipt(pending) => {
+                    bail!("Transaction should not be pending. Pending: {pending:?}");
+                }
+            };
+
+            resources.push(resource);
         }
+
+        Ok((block_with_txs, resources))
     }
 
     Ok(results)

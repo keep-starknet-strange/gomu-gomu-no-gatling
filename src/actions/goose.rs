@@ -13,15 +13,12 @@ use starknet::{
         Account, Call, ConnectedAccount, ExecutionEncoder, RawExecution, SingleOwnerAccount,
     },
     core::types::{
-        ExecutionResult, FieldElement, InvokeTransactionResult, MaybePendingTransactionReceipt,
-        StarknetError,
+        BroadcastedInvokeTransaction, ExecutionResult, FieldElement, InvokeTransactionResult,
+        MaybePendingTransactionReceipt,
     },
     macros::{felt, selector},
     providers::{
-        jsonrpc::{
-            HttpTransport, HttpTransportError, JsonRpcClientError, JsonRpcError, JsonRpcMethod,
-            JsonRpcResponse,
-        },
+        jsonrpc::{HttpTransport, JsonRpcError, JsonRpcMethod, JsonRpcResponse},
         JsonRpcClient, ProviderError,
     },
     signers::LocalWallet,
@@ -200,13 +197,11 @@ struct GooseUserState {
     prev_tx: Vec<FieldElement>,
 }
 
-pub type RpcError = ProviderError<JsonRpcClientError<HttpTransportError>>;
-
 impl GooseUserState {
     pub async fn new(
         account: StarknetAccount,
         transactions_amount: usize,
-    ) -> Result<Self, RpcError> {
+    ) -> Result<Self, ProviderError> {
         Ok(Self {
             nonce: account.get_nonce().await?,
             account,
@@ -218,7 +213,7 @@ impl GooseUserState {
 async fn setup(
     accounts: Vec<StarknetAccount>,
     transactions_amount: usize,
-) -> Result<TransactionFunction, RpcError> {
+) -> Result<TransactionFunction, ProviderError> {
     let queue = ArrayQueue::new(accounts.len());
     for account in accounts {
         queue
@@ -395,6 +390,8 @@ pub async fn wait_for_tx(
             user.set_failure(&tag, &mut metrics, None, None)?;
         }
 
+        const TRANSACTION_HASH_NOT_FOUND: i64 = 29;
+
         match receipt {
             JsonRpcResponse::Success {
                 result: MaybePendingTransactionReceipt::Receipt(receipt),
@@ -432,9 +429,13 @@ pub async fn wait_for_tx(
                 tokio::time::sleep(CHECK_INTERVAL).await;
             }
             JsonRpcResponse::Error {
-                error: JsonRpcError { code, .. },
+                error:
+                    JsonRpcError {
+                        code: TRANSACTION_HASH_NOT_FOUND,
+                        ..
+                    },
                 ..
-            } if code == StarknetError::TransactionHashNotFound as i64 => {
+            } => {
                 log::debug!("Waiting for transaction {tx_hash:#064x} to show up");
                 tokio::time::sleep(CHECK_INTERVAL).await;
             }
@@ -478,12 +479,12 @@ pub async fn send_execution<T: DeserializeOwned>(
     // see https://github.com/xJonathanLEI/starknet-rs/issues/538
     let raw_exec = unsafe { mem::transmute::<FakeRawExecution, RawExecution>(raw_exec) };
 
-    let param = starknet::core::types::BroadcastedInvokeTransaction {
+    let param = BroadcastedInvokeTransaction {
         sender_address: from_account.address(),
         calldata,
         max_fee: MAX_FEE,
         signature: from_account
-            .sign_execution(&raw_exec)
+            .sign_execution(&raw_exec, false)
             .await
             .expect("Raw Execution should be correctly constructed for signature"),
         nonce,
