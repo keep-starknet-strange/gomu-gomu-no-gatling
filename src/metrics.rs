@@ -316,11 +316,8 @@ pub fn compute_node_metrics(
     let (last_block, _) = blocks_with_txs.last().ok_or_eyre("No last block")?;
 
     if first_block.timestamp != last_block.timestamp {
-        let time = last_block.timestamp - first_block.timestamp;
-
         let total_uops: u64 = blocks_with_txs
             .iter()
-            .skip(1) // Skip first block as its creation time is the start time for this metric
             .flat_map(|(b, _)| &b.transactions)
             .map(tx_get_user_operations)
             .collect::<Result<Vec<_>, _>>()?
@@ -329,7 +326,6 @@ pub fn compute_node_metrics(
 
         let total_steps: u64 = blocks_with_txs
             .iter()
-            .skip(1)
             .flat_map(|(_, r)| r)
             .map(|resource| resource.steps)
             .sum();
@@ -337,13 +333,13 @@ pub fn compute_node_metrics(
         metrics.push(MetricResult {
             name: "Average UOPS",
             unit: "operations/second",
-            value: (total_uops as f64 / time as f64).into(),
+            value: (total_uops as f64 / blocks_with_txs.len() as f64 / BLOCK_TIME as f64).into(),
         });
 
         metrics.push(MetricResult {
             name: "Average Steps Per Second",
             unit: "operations/second",
-            value: (total_steps as f64 / time as f64).into(),
+            value: (total_steps as f64 / blocks_with_txs.len() as f64 / BLOCK_TIME as f64).into(),
         });
     }
 
@@ -363,6 +359,6 @@ fn tx_get_user_operations(tx: &Transaction) -> Result<u64> {
 
             user_operations.try_into()?
         }
-        _ => 1 // Other txs can be considered as 1 uop
+        _ => 1, // Other txs can be considered as 1 uop
     })
 }

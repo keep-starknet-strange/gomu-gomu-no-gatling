@@ -203,11 +203,6 @@ pub async fn get_blocks_with_txs(
         join_set.spawn(get_block_info(starknet_rpc, block_number));
     }
 
-    // Process the rest
-    while let Some(next) = join_set.join_next().await {
-        results.push(next??)
-    }
-
     async fn get_block_info(
         starknet_rpc: Arc<JsonRpcClient<HttpTransport>>,
         block_number: u64,
@@ -249,6 +244,14 @@ pub async fn get_blocks_with_txs(
 
         Ok((block_with_txs, resources))
     }
+
+    // Process the rest
+    while let Some(next) = join_set.join_next().await {
+        results.push(next??)
+    }
+    
+    // Make sure blocks are in order
+    results.sort_unstable_by_key(|(block, _)| block.block_number);
 
     Ok(results)
 }
