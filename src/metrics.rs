@@ -5,7 +5,7 @@ use color_eyre::{
     Result,
 };
 
-use goose::metrics::GooseMetrics;
+use goose::metrics::{GooseMetrics, TransactionMetricAggregate};
 use serde_derive::Serialize;
 use starknet::providers::{jsonrpc::HttpTransport, JsonRpcClient, Provider};
 use std::fmt;
@@ -13,7 +13,7 @@ use std::fmt;
 pub const BLOCK_TIME: u64 = 6;
 
 #[derive(Clone, Debug, Serialize)]
-pub struct WholeReport {
+pub struct GlobalReport {
     pub users: u64,
     pub all_bench_report: BenchmarkReport,
     pub benches: Vec<BenchmarkReport>,
@@ -48,14 +48,14 @@ pub struct MetricResult {
     pub value: serde_json::Value,
 }
 
-/// A benchmark report contains a name and a vector of metric results
-/// of all the metrics that were computed for the benchmark
-/// A benchmark report can be created from a block range or from the last x blocks
+/// A benchmark report contains the metrics for a single benchmark
+/// it also includes the name, amount of times it was ran and
+/// optionally metrics over the last x blocks
 /// It implements the Serialize trait so it can be serialized to json
 #[derive(Debug, Clone, Serialize)]
 pub struct BenchmarkReport {
     #[serde(skip_serializing_if = "str::is_empty")]
-    pub name: &'static str,
+    pub name: String,
     pub amount: usize,
     pub metrics: Vec<MetricResult>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -69,7 +69,7 @@ pub struct LastXBlocksMetric {
 }
 
 impl BenchmarkReport {
-    pub fn new(name: &'static str, amount: usize) -> BenchmarkReport {
+    pub fn new(name: String, amount: usize) -> BenchmarkReport {
         BenchmarkReport {
             name,
             amount,
@@ -120,11 +120,6 @@ impl BenchmarkReport {
     }
 
     pub fn with_goose_metrics(&mut self, metrics: &GooseMetrics) -> Result<()> {
-        let scenario = metrics
-            .scenarios
-            .first()
-            .ok_or(eyre!("There is no scenario"))?;
-
         let transactions = metrics
             .transactions
             .first()
@@ -173,7 +168,7 @@ impl BenchmarkReport {
             MetricResult {
                 name: "Average Submission Time",
                 unit: "milliseconds",
-                value: (requests.total_time as f64 / scenario.counter as f64).into(),
+                value: transaction_average(requests).into(),
             },
             MetricResult {
                 name: "Max Verification Time",
@@ -188,13 +183,16 @@ impl BenchmarkReport {
             MetricResult {
                 name: "Average Verification Time",
                 unit: "milliseconds",
-                value: (verification_requests.raw_data.total_time as f64 / scenario.counter as f64)
-                    .into(),
+                value: transaction_average(requests).into(),
             },
         ]);
 
         Ok(())
     }
+}
+
+fn transaction_average(requests: &TransactionMetricAggregate) -> f64 {
+    requests.total_time as f64 / requests.counter as f64
 }
 
 impl fmt::Display for MetricResult {
