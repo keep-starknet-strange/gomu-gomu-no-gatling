@@ -14,7 +14,6 @@ use starknet::{
     },
     core::types::{
         ExecutionResult, FieldElement, InvokeTransactionResult, MaybePendingTransactionReceipt,
-        StarknetError,
     },
     macros::{felt, selector},
     providers::{
@@ -393,6 +392,8 @@ pub async fn wait_for_tx(
 
         let reverted_tag = || format!("Transaction {tx_hash:#064x} has been rejected/reverted");
 
+        const TRANSACTION_HASH_NOT_FOUND: i64 = 29;
+
         match receipt {
             JsonRpcResponse::Success {
                 result: MaybePendingTransactionReceipt::Receipt(receipt),
@@ -423,9 +424,13 @@ pub async fn wait_for_tx(
                 tokio::time::sleep(CHECK_INTERVAL).await;
             }
             JsonRpcResponse::Error {
-                error: JsonRpcError { code, .. },
+                error:
+                    JsonRpcError {
+                        code: TRANSACTION_HASH_NOT_FOUND,
+                        ..
+                    },
                 ..
-            } if code == StarknetError::TransactionHashNotFound as i64 => {
+            } => {
                 log::debug!("Waiting for transaction {tx_hash:#064x} to show up");
                 tokio::time::sleep(CHECK_INTERVAL).await;
             }
