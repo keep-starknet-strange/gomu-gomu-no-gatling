@@ -357,7 +357,7 @@ async fn verify_transactions(user: &mut GooseUser) -> TransactionResult {
                 ExecutionResult::Reverted { reason } => {
                     let tag = format!("Transaction {tx:#064x} has been rejected/reverted");
 
-                    user.set_failure(&tag, &mut metrics, None, Some(reason))?;
+                    return user.set_failure(&tag, &mut metrics, None, Some(reason));
                 }
             },
             MaybePendingTransactionReceipt::PendingReceipt(pending) => {
@@ -365,7 +365,7 @@ async fn verify_transactions(user: &mut GooseUser) -> TransactionResult {
                     format!("Transaction {tx:#064x} is pending when no transactions should be");
                 let body = format!("{pending:?}");
 
-                user.set_failure(&tag, &mut metrics, None, Some(&body))?;
+                return user.set_failure(&tag, &mut metrics, None, Some(&body));
             }
         }
     }
@@ -382,14 +382,16 @@ pub async fn wait_for_tx(
     let start = SystemTime::now();
 
     loop {
-        let (receipt, mut metrics) =
+        let (receipt, mut metric) =
             raw_send_request(user, JsonRpcMethod::GetTransactionReceipt, tx_hash).await?;
 
         if start.elapsed().unwrap() >= WAIT_FOR_TX_TIMEOUT {
             let tag = format!("Timeout while waiting for transaction {tx_hash:#064x}");
-            user.set_failure(&tag, &mut metrics, None, None)?;
+            return user.set_failure(&tag, &mut metric, None, None);
         }
 
+        let reverted_tag = || format!("Transaction {tx_hash:#064x} has been rejected/reverted");
+      
         const TRANSACTION_HASH_NOT_FOUND: i64 = 29;
 
         match receipt {
@@ -407,11 +409,7 @@ pub async fn wait_for_tx(
                         return Ok(());
                     }
                     ExecutionResult::Reverted { reason } => {
-                        let tag = format!(
-                            "Transaction {tx_hash:#064x} has been rejected/reverted: {reason}"
-                        );
-
-                        user.set_failure(&tag, &mut metrics, None, None)?;
+                        return user.set_failure(&reverted_tag(), &mut metric, None, Some(reason));
                     }
                 }
             }
@@ -420,10 +418,7 @@ pub async fn wait_for_tx(
                 ..
             } => {
                 if let ExecutionResult::Reverted { reason } = pending.execution_result() {
-                    let tag =
-                        format!("Transaction {tx_hash:#064x} has been rejected/reverted: {reason}");
-
-                    user.set_failure(&tag, &mut metrics, None, None)?;
+                    return user.set_failure(&reverted_tag(), &mut metric, None, Some(reason));
                 }
                 log::debug!("Waiting for transaction {tx_hash:#064x} to be accepted");
                 tokio::time::sleep(CHECK_INTERVAL).await;
@@ -443,16 +438,15 @@ pub async fn wait_for_tx(
                 error: JsonRpcError { code, message },
                 ..
             } => {
-                let tag = format!(
-                    "Error Code {code} while waiting for transaction {tx_hash:#064x}: {message}"
-                );
+                let tag = format!("Error Code {code} while waiting for tx {tx_hash:#064x}");
 
-                user.set_failure(&tag, &mut metrics, None, None)?;
+                return user.set_failure(&tag, &mut metric, None, Some(&message));
             }
         }
     }
 }
 
+/// Sends a execution request via goose, returning the successful json rpc response
 pub async fn send_execution<T: DeserializeOwned>(
     user: &mut GooseUser,
     calls: Vec<Call>,
@@ -494,6 +488,7 @@ pub async fn send_execution<T: DeserializeOwned>(
     send_request(user, method, param).await
 }
 
+/// Sends request via goose, returning the successful json rpc response
 pub async fn send_request<T: DeserializeOwned>(
     user: &mut GooseUser,
     method: JsonRpcMethod,
@@ -517,6 +512,7 @@ pub async fn send_request<T: DeserializeOwned>(
     }
 }
 
+/// Sends request via goose, returning the deserialized response
 pub async fn raw_send_request<T: DeserializeOwned>(
     user: &mut GooseUser,
     method: JsonRpcMethod,
