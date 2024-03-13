@@ -204,12 +204,12 @@ impl BenchmarkReport {
             self.metrics.extend_from_slice(&[
                 MetricResult {
                     name: "P90 Submission Time",
-                    unit: "milliseconds",
+                    unit: GOOSE_TIME_UNIT,
                     value: sub_90.into(),
                 },
                 MetricResult {
                     name: "P50 Submission Time",
-                    unit: "milliseconds",
+                    unit: GOOSE_TIME_UNIT,
                     value: sub_p50.into(),
                 },
             ])
@@ -219,12 +219,12 @@ impl BenchmarkReport {
             self.metrics.extend_from_slice(&[
                 MetricResult {
                     name: "P90 Verification Time",
-                    unit: "milliseconds",
+                    unit: GOOSE_TIME_UNIT,
                     value: ver_p90.into(),
                 },
                 MetricResult {
                     name: "P50 Verification Time",
-                    unit: "milliseconds",
+                    unit: GOOSE_TIME_UNIT,
                     value: ver_p50.into(),
                 },
             ])
