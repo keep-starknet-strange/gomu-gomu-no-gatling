@@ -134,15 +134,17 @@ impl BenchmarkReport {
             .get("POST Verification")
             .ok_or(eyre!("Found no verification request metrics"))?;
 
+        const GOOSE_TIME_UNIT: &str = "milliseconds";
+
         self.metrics.extend_from_slice(&[
             MetricResult {
                 name: "Total Submission Time",
-                unit: "milliseconds",
+                unit: GOOSE_TIME_UNIT,
                 value: requests.total_time.into(),
             },
             MetricResult {
                 name: "Total Verification Time",
-                unit: "milliseconds",
+                unit: GOOSE_TIME_UNIT,
                 value: verification.total_time.into(),
             },
             MetricResult {
@@ -157,32 +159,32 @@ impl BenchmarkReport {
             },
             MetricResult {
                 name: "Max Submission Time",
-                unit: "milliseconds",
+                unit: GOOSE_TIME_UNIT,
                 value: requests.max_time.into(),
             },
             MetricResult {
                 name: "Min Submission Time",
-                unit: "milliseconds",
+                unit: GOOSE_TIME_UNIT,
                 value: requests.min_time.into(),
             },
             MetricResult {
                 name: "Average Submission Time",
-                unit: "milliseconds",
+                unit: GOOSE_TIME_UNIT,
                 value: transaction_average(requests).into(),
             },
             MetricResult {
                 name: "Max Verification Time",
-                unit: "milliseconds",
+                unit: GOOSE_TIME_UNIT,
                 value: verification_requests.raw_data.maximum_time.into(),
             },
             MetricResult {
                 name: "Min Verification Time",
-                unit: "milliseconds",
+                unit: GOOSE_TIME_UNIT,
                 value: verification_requests.raw_data.minimum_time.into(),
             },
             MetricResult {
                 name: "Average Verification Time",
-                unit: "milliseconds",
+                unit: GOOSE_TIME_UNIT,
                 value: transaction_average(requests).into(),
             },
         ]);
