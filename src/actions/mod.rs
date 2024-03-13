@@ -2,7 +2,14 @@ use std::sync::Arc;
 
 use ::goose::metrics::GooseMetrics;
 use futures::Future;
-use starknet::providers::{jsonrpc::HttpTransport, JsonRpcClient, Provider};
+use serde_json::json;
+use starknet::{
+    core::types::BlockId,
+    providers::{
+        jsonrpc::{HttpTransport, JsonRpcMethod},
+        JsonRpcClient, Provider,
+    },
+};
 
 use crate::{
     config::GatlingConfig,
@@ -15,8 +22,6 @@ mod goose;
 mod shoot;
 
 pub async fn shoot(config: GatlingConfig) -> color_eyre::Result<()> {
-    let run_erc20 = config.run.num_erc20_transfers != 0;
-    let run_erc721 = config.run.num_erc721_mints != 0;
     let total_txs = config.run.num_erc20_transfers + config.run.num_erc721_mints;
     let num_blocks = config.report.num_blocks;
 
@@ -32,8 +37,8 @@ pub async fn shoot(config: GatlingConfig) -> color_eyre::Result<()> {
 
     let start_block = shooter.rpc_client().block_number().await?;
 
-    if run_erc20 {
-        let report = make_report_over_bench(
+    if shooter.config().run.num_erc20_transfers != 0 {
+        let report = make_report_over_write_bench(
             goose::erc20(&shooter),
             "Erc20 Transfers".into(),
             shooter.rpc_client(),
@@ -46,8 +51,8 @@ pub async fn shoot(config: GatlingConfig) -> color_eyre::Result<()> {
         log::info!("Skipping erc20 transfers")
     }
 
-    if run_erc721 {
-        let report = make_report_over_bench(
+    if shooter.config().run.num_erc721_mints != 0 {
+        let report = make_report_over_write_bench(
             goose::erc721(&shooter),
             "Erc721 Mints".into(),
             shooter.rpc_client(),
@@ -61,6 +66,31 @@ pub async fn shoot(config: GatlingConfig) -> color_eyre::Result<()> {
     }
 
     let end_block = shooter.rpc_client().block_number().await?;
+
+    let num_get_events = shooter.config().run.num_get_events;
+    if num_get_events != 0 {
+        let request = json!(
+            {
+                "from_block": BlockId::Number(start_block),
+                "to_block": BlockId::Number(end_block),
+                "address": null,
+                "keys": [],
+                "continuation_token": null,
+                "chunk_size": global_report.all_bench_report.amount as u64
+            }
+        );
+
+        let metrics =
+            goose::read_method(&shooter, num_get_events, JsonRpcMethod::GetEvents, request).await?;
+
+        let mut report = BenchmarkReport::new("Get Events".into(), metrics.scenarios[0].counter);
+
+        report.with_goose_read_metrics(&metrics)?;
+
+        global_report.benches.push(report);
+    } else {
+        log::info!("Skipping get events")
+    }
 
     global_report
         .all_bench_report
@@ -79,7 +109,7 @@ pub async fn shoot(config: GatlingConfig) -> color_eyre::Result<()> {
     Ok(())
 }
 
-async fn make_report_over_bench(
+async fn make_report_over_write_bench(
     bench: impl Future<Output = color_eyre::Result<GooseMetrics>>,
     name: String,
     rpc_client: &Arc<JsonRpcClient<HttpTransport>>,
@@ -98,6 +128,6 @@ async fn make_report_over_bench(
         report.with_last_x_blocks(rpc_client, num_blocks).await?;
     }
 
-    report.with_goose_metrics(&goose_metrics)?;
+    report.with_goose_write_metrics(&goose_metrics)?;
     Ok(report)
 }

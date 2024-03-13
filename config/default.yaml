@@ -18,6 +18,7 @@ setup:
 run:
   num_erc20_transfers: 1000
   num_erc721_mints: 1000
+  num_get_events: 1000
   concurrency: 5
 
 report:

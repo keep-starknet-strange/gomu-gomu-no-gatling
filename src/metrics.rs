@@ -42,6 +42,8 @@ pub struct NodeMetrics {
     pub compute: fn(&[u64]) -> f64,
 }
 
+const GOOSE_TIME_UNIT: &str = "milliseconds";
+
 /// A struct that contains the result of a metric computation alognside the name and unit
 /// This struct is used for displaying the metric result
 /// Example:
@@ -125,7 +127,7 @@ impl BenchmarkReport {
         Ok(())
     }
 
-    pub fn with_goose_metrics(&mut self, metrics: &GooseMetrics) -> Result<()> {
+    pub fn with_goose_write_metrics(&mut self, metrics: &GooseMetrics) -> Result<()> {
         let transactions = metrics
             .transactions
             .first()
@@ -144,8 +146,6 @@ impl BenchmarkReport {
             .requests
             .get("POST Verification")
             .ok_or_eyre("Found no verification request metrics")?;
-
-        const GOOSE_TIME_UNIT: &str = "milliseconds";
 
         self.metrics.extend_from_slice(&[
             MetricResult {
@@ -216,6 +216,53 @@ impl BenchmarkReport {
         }
 
         if let Some((ver_p50, ver_p90)) = calculate_p50_and_p90(&verification_requests.raw_data) {
+            self.metrics.extend_from_slice(&[
+                MetricResult {
+                    name: "P90 Verification Time",
+                    unit: GOOSE_TIME_UNIT,
+                    value: ver_p90.into(),
+                },
+                MetricResult {
+                    name: "P50 Verification Time",
+                    unit: GOOSE_TIME_UNIT,
+                    value: ver_p50.into(),
+                },
+            ])
+        }
+
+        Ok(())
+    }
+
+    pub fn with_goose_read_metrics(&mut self, metrics: &GooseMetrics) -> color_eyre::Result<()> {
+        let requests = metrics
+            .requests
+            .get("POST Request")
+            .ok_or_eyre("Found no read request metrics")?;
+
+        self.metrics.extend_from_slice(&[
+            MetricResult {
+                name: "Total Time",
+                unit: GOOSE_TIME_UNIT,
+                value: requests.raw_data.total_time.into(),
+            },
+            MetricResult {
+                name: "Max Time",
+                unit: GOOSE_TIME_UNIT,
+                value: requests.raw_data.maximum_time.into(),
+            },
+            MetricResult {
+                name: "Min Time",
+                unit: GOOSE_TIME_UNIT,
+                value: requests.raw_data.minimum_time.into(),
+            },
+            MetricResult {
+                name: "Average Time",
+                unit: GOOSE_TIME_UNIT,
+                value: (requests.raw_data.total_time as f64 / requests.success_count as f64).into(),
+            },
+        ]);
+
+        if let Some((ver_p50, ver_p90)) = calculate_p50_and_p90(&requests.raw_data) {
             self.metrics.extend_from_slice(&[
                 MetricResult {
                     name: "P90 Verification Time",

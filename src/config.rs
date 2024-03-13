@@ -105,6 +105,7 @@ pub struct DeployerConfig {
 pub struct RunConfig {
     pub num_erc20_transfers: u64,
     pub num_erc721_mints: u64,
+    pub num_get_events: u64,
     pub concurrency: u64,
 }
 

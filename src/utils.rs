@@ -244,7 +244,7 @@ pub async fn get_blocks_with_txs(
     while let Some(next) = join_set.join_next().await {
         results.push(next??)
     }
-    
+
     // Make sure blocks are in order
     results.sort_unstable_by_key(|(block, _)| block.block_number);
 
