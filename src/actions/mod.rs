@@ -92,10 +92,14 @@ pub async fn shoot(config: GatlingConfig) -> color_eyre::Result<()> {
         log::info!("Skipping get events")
     }
 
-    global_report
+    let rpc_result = global_report
         .all_bench_report
         .with_block_range(shooter.rpc_client(), start_block, end_block)
-        .await?;
+        .await;
+
+    if let Err(error) = rpc_result {
+        log::error!("Failed to get block range: {error}")
+    }
 
     let report_path = shooter
         .config()
@@ -120,11 +124,14 @@ async fn make_report_over_write_bench(
     let end_block = rpc_client.block_number().await?;
 
     let mut report = BenchmarkReport::new(name, goose_metrics.scenarios[0].counter);
-    report
-        .with_block_range(rpc_client, start_block + 1, end_block)
-        .await?;
 
-    if num_blocks != 0 {
+    let rpc_result = report
+        .with_block_range(rpc_client, start_block + 1, end_block)
+        .await;
+
+    if let Err(error) = rpc_result {
+        log::error!("Failed to get block range: {error}")
+    } else if num_blocks != 0 {
         report.with_last_x_blocks(rpc_client, num_blocks).await?;
     }
 
