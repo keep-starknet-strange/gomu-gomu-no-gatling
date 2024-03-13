@@ -28,7 +28,7 @@ run:
 
 report:
   num_blocks: 3
-  location: "report"
+  output_location: "report"
 
 deployer:
   salt: "1"
