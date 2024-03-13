@@ -90,7 +90,7 @@ The configuration is defined by the following spec
 - `report`
 
   - `num_blocks`: Number of last blocks to take into account in the report
-  - `location`: Path to the file where to save the reports
+  - `output_location`: Path to the file where to save the reports
 
 - `deployer`
 
@@ -106,7 +106,7 @@ gatling shoot -c config/default.yaml
 
 ### Output
 
-The main output of gomu gomu is the report location specified in specified in the configuration file.
+The main output of gomu gomu is the report output location specified in specified in the configuration file.
 
 At the end of all benchmarks gomu gomu will collect the results into a single json file with the following structure:
 

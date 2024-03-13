@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use ::goose::metrics::GooseMetrics;
 use futures::Future;
 use starknet::providers::{jsonrpc::HttpTransport, JsonRpcClient, Provider};
@@ -65,7 +67,11 @@ pub async fn shoot(config: GatlingConfig) -> color_eyre::Result<()> {
         .with_block_range(shooter.rpc_client(), start_block, end_block)
         .await?;
 
-    let report_path = shooter.config().report.location.with_extension("json");
+    let report_path = shooter
+        .config()
+        .report
+        .output_location
+        .with_extension("json");
 
     let writer = std::fs::File::create(report_path)?;
     serde_json::to_writer_pretty(writer, &global_report)?;
@@ -76,7 +82,7 @@ pub async fn shoot(config: GatlingConfig) -> color_eyre::Result<()> {
 async fn make_report_over_bench(
     bench: impl Future<Output = color_eyre::Result<GooseMetrics>>,
     name: String,
-    rpc_client: &JsonRpcClient<HttpTransport>,
+    rpc_client: &Arc<JsonRpcClient<HttpTransport>>,
     num_blocks: u64,
 ) -> color_eyre::Result<BenchmarkReport> {
     let start_block = rpc_client.block_number().await?;

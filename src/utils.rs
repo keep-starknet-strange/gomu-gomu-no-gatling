@@ -67,6 +67,7 @@ pub struct SysInfo {
 }
 
 impl SysInfo {
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         let sys = System::new_all();
         let cpu = sys.global_cpu_info();
@@ -105,12 +106,6 @@ pub fn sysinfo_string() -> String {
         Release: {kernel_version}\n\
         Architecture: {arch}",
     )
-}
-
-impl Default for SysInfo {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 const WAIT_FOR_TX_TIMEOUT: Duration = Duration::from_secs(60);

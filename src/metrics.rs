@@ -6,7 +6,6 @@ use color_eyre::{
 };
 
 use goose::metrics::{GooseMetrics, GooseRequestMetricTimingData};
-use goose::metrics::{GooseMetrics, TransactionMetricAggregate, GooseRequestMetricTimingData};
 use serde_derive::Serialize;
 use starknet::{
     core::types::{
@@ -146,15 +145,17 @@ impl BenchmarkReport {
             .get("POST Verification")
             .ok_or_eyre("Found no verification request metrics")?;
 
+        const GOOSE_TIME_UNIT: &str = "milliseconds";
+
         self.metrics.extend_from_slice(&[
             MetricResult {
                 name: "Total Submission Time",
-                unit: "milliseconds",
+                unit: GOOSE_TIME_UNIT,
                 value: submission_requests.raw_data.total_time.into(),
             },
             MetricResult {
                 name: "Total Verification Time",
-                unit: "milliseconds",
+                unit: GOOSE_TIME_UNIT,
                 value: verification.total_time.into(),
             },
             MetricResult {
@@ -169,33 +170,33 @@ impl BenchmarkReport {
             },
             MetricResult {
                 name: "Max Submission Time",
-                unit: "milliseconds",
+                unit: GOOSE_TIME_UNIT,
                 value: submission_requests.raw_data.maximum_time.into(),
             },
             MetricResult {
                 name: "Min Submission Time",
-                unit: "milliseconds",
+                unit: GOOSE_TIME_UNIT,
                 value: submission_requests.raw_data.minimum_time.into(),
             },
             MetricResult {
                 name: "Average Submission Time",
-                unit: "milliseconds",
-                value: transaction_average(requests).into(),
+                unit: GOOSE_TIME_UNIT,
+                value: transaction_average(&submission_requests.raw_data).into(),
             },
             MetricResult {
                 name: "Max Verification Time",
-                unit: "milliseconds",
+                unit: GOOSE_TIME_UNIT,
                 value: verification_requests.raw_data.maximum_time.into(),
             },
             MetricResult {
                 name: "Min Verification Time",
-                unit: "milliseconds",
+                unit: GOOSE_TIME_UNIT,
                 value: verification_requests.raw_data.minimum_time.into(),
             },
             MetricResult {
                 name: "Average Verification Time",
-                unit: "milliseconds",
-                value: transaction_average(requests).into(),
+                unit: GOOSE_TIME_UNIT,
+                value: transaction_average(&verification_requests.raw_data).into(),
             },
         ]);
 
@@ -233,8 +234,8 @@ impl BenchmarkReport {
     }
 }
 
-fn transaction_average(requests: &TransactionMetricAggregate) -> f64 {
-    requests.total_time as f64 / requests.counter as f64
+fn transaction_average(timings: &GooseRequestMetricTimingData) -> f64 {
+    timings.total_time as f64 / timings.counter as f64
 }
 
 fn calculate_p50_and_p90(timing_data: &GooseRequestMetricTimingData) -> Option<(usize, usize)> {
