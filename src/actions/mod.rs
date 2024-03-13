@@ -65,7 +65,11 @@ pub async fn shoot(config: GatlingConfig) -> color_eyre::Result<()> {
         .with_block_range(shooter.rpc_client(), start_block, end_block)
         .await?;
 
-    let report_path = shooter.config().report.output_location.with_extension("json");
+    let report_path = shooter
+        .config()
+        .report
+        .output_location
+        .with_extension("json");
 
     let writer = std::fs::File::create(report_path)?;
     serde_json::to_writer_pretty(writer, &global_report)?;
