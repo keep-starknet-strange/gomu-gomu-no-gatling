@@ -260,6 +260,11 @@ impl BenchmarkReport {
                 unit: GOOSE_TIME_UNIT,
                 value: (requests.raw_data.total_time as f64 / requests.success_count as f64).into(),
             },
+            MetricResult {
+                name: "Failed Requests",
+                unit: "",
+                value: requests.fail_count.into(),
+            },
         ]);
 
         if let Some((ver_p50, ver_p90)) = calculate_p50_and_p90(&requests.raw_data) {

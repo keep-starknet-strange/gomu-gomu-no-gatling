@@ -76,7 +76,7 @@ pub async fn shoot(config: GatlingConfig) -> color_eyre::Result<()> {
                 "address": null,
                 "keys": [],
                 "continuation_token": null,
-                "chunk_size": global_report.all_bench_report.amount as u64
+                "chunk_size": 10
             }
         );
 
