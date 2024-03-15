@@ -19,11 +19,7 @@ run:
   num_erc20_transfers: 1000
   num_erc721_mints: 1000
   num_get_events: 100
-  concurrency: 10
-
-# read_metrics:
-#   get_events:
-#     parameters_loc: "params.json"
+  concurrency: 5
 
 report:
   num_blocks: 4
