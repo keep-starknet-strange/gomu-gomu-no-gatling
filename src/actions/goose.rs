@@ -398,16 +398,14 @@ pub async fn wait_for_tx(
             JsonRpcResponse::Success {
                 result: MaybePendingTransactionReceipt::Receipt(receipt),
                 ..
-            } => {
-                match receipt.execution_result() {
-                    ExecutionResult::Succeeded => {
-                        return Ok(());
-                    }
-                    ExecutionResult::Reverted { reason } => {
-                        return user.set_failure(&reverted_tag(), &mut metric, None, Some(reason));
-                    }
+            } => match receipt.execution_result() {
+                ExecutionResult::Succeeded => {
+                    return Ok(());
                 }
-            }
+                ExecutionResult::Reverted { reason } => {
+                    return user.set_failure(&reverted_tag(), &mut metric, None, Some(reason));
+                }
+            },
             JsonRpcResponse::Success {
                 result: MaybePendingTransactionReceipt::PendingReceipt(pending),
                 ..

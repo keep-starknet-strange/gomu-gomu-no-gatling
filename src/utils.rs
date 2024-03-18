@@ -122,18 +122,16 @@ pub async fn wait_for_tx(
         }
 
         match provider.get_transaction_receipt(tx_hash).await {
-            Ok(Receipt(receipt)) => {
-                match receipt.execution_result() {
-                    ExecutionResult::Succeeded => {
-                        return Ok(());
-                    }
-                    ExecutionResult::Reverted { reason } => {
-                        return Err(eyre!(format!(
-                            "Transaction {tx_hash:#064x} has been rejected/reverted: {reason}"
-                        )));
-                    }
+            Ok(Receipt(receipt)) => match receipt.execution_result() {
+                ExecutionResult::Succeeded => {
+                    return Ok(());
                 }
-            }
+                ExecutionResult::Reverted { reason } => {
+                    return Err(eyre!(format!(
+                        "Transaction {tx_hash:#064x} has been rejected/reverted: {reason}"
+                    )));
+                }
+            },
             Ok(PendingReceipt(pending)) => {
                 if let ExecutionResult::Reverted { reason } = pending.execution_result() {
                     return Err(eyre!(format!(
