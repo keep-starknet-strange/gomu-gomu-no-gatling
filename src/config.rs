@@ -111,7 +111,7 @@ pub struct RunConfig {
 #[derive(Debug, Deserialize, Clone)]
 pub struct ReportConfig {
     pub num_blocks: u64,
-    pub reports_dir: PathBuf,
+    pub output_location: PathBuf,
 }
 
 impl GatlingConfig {

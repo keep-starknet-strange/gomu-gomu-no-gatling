@@ -22,7 +22,7 @@ run:
 
 report:
   num_blocks: 4
-  reports_dir: "reports"
+  output_location: "report"
 
 # need to add an adress and signing key on sharingan network
 deployer:

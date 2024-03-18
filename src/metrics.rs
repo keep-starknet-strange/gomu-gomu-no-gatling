@@ -1,12 +1,24 @@
-use crate::utils::{get_num_tx_per_block, SysInfo, SYSINFO};
+use crate::utils::get_num_tx_per_block;
 
-use color_eyre::Result;
+use color_eyre::{
+    eyre::{bail, eyre},
+    Result,
+};
 
-use serde_json::{json, Value};
+use goose::metrics::{GooseMetrics, TransactionMetricAggregate};
+use serde_derive::Serialize;
 use starknet::providers::{jsonrpc::HttpTransport, JsonRpcClient, Provider};
-use std::{fmt, ops::Deref, sync::Arc};
+use std::fmt;
 
 pub const BLOCK_TIME: u64 = 6;
+
+#[derive(Clone, Debug, Serialize)]
+pub struct GlobalReport {
+    pub users: u64,
+    pub all_bench_report: BenchmarkReport,
+    pub benches: Vec<BenchmarkReport>,
+    pub extra: String,
+}
 
 /// Metric struct that contains the name, unit and compute function for a metric
 /// A Metric is a measure of a specific performance aspect of a benchmark through
@@ -18,7 +30,7 @@ pub const BLOCK_TIME: u64 = 6;
 /// { name: "Average TPS", unit: "transactions/second", compute: average_tps }
 /// "Average TPS: 1000 transactions/second"
 #[derive(PartialEq, Eq, Hash, Clone)]
-pub struct Metric {
+pub struct NodeMetrics {
     pub name: &'static str,
     pub unit: &'static str,
     pub compute: fn(&[u64]) -> f64,
@@ -29,36 +41,49 @@ pub struct Metric {
 /// Example:
 /// MetricResult { name: "Average TPS", unit: "transactions/second", value: 1000 }
 /// "Average TPS: 1000 transactions/second"
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct MetricResult {
     pub name: &'static str,
     pub unit: &'static str,
-    pub value: f64,
+    pub value: serde_json::Value,
 }
 
-/// The simulation report.
-#[derive(Debug, Default, Clone)]
-pub struct GatlingReport {
-    pub benchmark_reports: Vec<BenchmarkReport>,
-}
-
-/// A benchmark report contains a name (used for displaying) and a vector of metric results
-/// of all the metrics that were computed for the benchmark
-/// A benchmark report can be created from a block range or from the last x blocks
+/// A benchmark report contains the metrics for a single benchmark
+/// it also includes the name, amount of times it was ran and
+/// optionally metrics over the last x blocks
 /// It implements the Serialize trait so it can be serialized to json
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct BenchmarkReport {
+    #[serde(skip_serializing_if = "str::is_empty")]
     pub name: String,
+    pub amount: usize,
+    pub metrics: Vec<MetricResult>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_x_blocks_metrics: Option<LastXBlocksMetric>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LastXBlocksMetric {
+    pub num_blocks: u64,
     pub metrics: Vec<MetricResult>,
 }
 
 impl BenchmarkReport {
-    pub async fn from_block_range<'a>(
-        starknet_rpc: Arc<JsonRpcClient<HttpTransport>>,
-        name: String,
+    pub fn new(name: String, amount: usize) -> BenchmarkReport {
+        BenchmarkReport {
+            name,
+            amount,
+            metrics: Vec::new(),
+            last_x_blocks_metrics: None,
+        }
+    }
+
+    pub async fn with_block_range(
+        &mut self,
+        starknet_rpc: &JsonRpcClient<HttpTransport>,
         mut start_block: u64,
         mut end_block: u64,
-    ) -> Result<BenchmarkReport> {
+    ) -> Result<()> {
         // Whenever possible, skip the first and last blocks from the metrics
         // to make sure all the blocks used for calculating metrics are full
         if end_block - start_block > 2 {
@@ -67,61 +92,109 @@ impl BenchmarkReport {
         }
 
         let num_tx_per_block = get_num_tx_per_block(starknet_rpc, start_block, end_block).await?;
-        let metrics = compute_all_metrics(num_tx_per_block);
+        let metrics = compute_node_metrics(num_tx_per_block);
 
-        Ok(BenchmarkReport { name, metrics })
+        self.metrics.extend_from_slice(&metrics);
+
+        Ok(())
     }
 
-    pub async fn from_last_x_blocks<'a>(
-        starknet_rpc: Arc<JsonRpcClient<HttpTransport>>,
-        name: String,
+    pub async fn with_last_x_blocks(
+        &mut self,
+        starknet_rpc: &JsonRpcClient<HttpTransport>,
         num_blocks: u64,
-    ) -> Result<BenchmarkReport> {
+    ) -> Result<()> {
         // The last block won't be full of transactions, so we skip it
         let end_block = starknet_rpc.block_number().await? - 1;
         let start_block = end_block - num_blocks;
 
         let num_tx_per_block = get_num_tx_per_block(starknet_rpc, start_block, end_block).await?;
-        let metrics = compute_all_metrics(num_tx_per_block);
+        let metrics = compute_node_metrics(num_tx_per_block).to_vec();
 
-        Ok(BenchmarkReport { name, metrics })
+        self.last_x_blocks_metrics = Some(LastXBlocksMetric {
+            num_blocks,
+            metrics,
+        });
+
+        Ok(())
     }
 
-    pub fn to_json(&self) -> Value {
-        let SysInfo {
-            os_name,
-            kernel_version,
-            arch,
-            cpu_count,
-            cpu_frequency,
-            cpu_brand,
-            memory,
-        } = SYSINFO.deref();
+    pub fn with_goose_metrics(&mut self, metrics: &GooseMetrics) -> Result<()> {
+        let transactions = metrics
+            .transactions
+            .first()
+            .ok_or(eyre!("Could no find scenario's transactions"))?;
 
-        let gigabyte_memory = memory / (1024 * 1024 * 1024);
+        let [_setup, requests, _finalizing, verification] = transactions.as_slice() else {
+            bail!("Failed at getting all transaction aggragates")
+        };
 
-        let sysinfo_string = format!(
-            "CPU Count: {cpu_count}\n\
-            CPU Model: {cpu_brand}\n\
-            CPU Speed (MHz): {cpu_frequency}\n\
-            Total Memory: {gigabyte_memory} GB\n\
-            Platform: {os_name}\n\
-            Release: {kernel_version}\n\
-            Architecture: {arch}",
-        );
+        let verification_requests = metrics
+            .requests
+            .get("POST Verification")
+            .ok_or(eyre!("Found no verification request metrics"))?;
 
-        self.metrics
-            .iter()
-            .map(|metric| {
-                json!({
-                    "name": metric.name,
-                    "unit": metric.unit,
-                    "value": metric.value,
-                    "extra": sysinfo_string
-                })
-            })
-            .collect::<Value>()
+        const GOOSE_TIME_UNIT: &str = "milliseconds";
+
+        self.metrics.extend_from_slice(&[
+            MetricResult {
+                name: "Total Submission Time",
+                unit: GOOSE_TIME_UNIT,
+                value: requests.total_time.into(),
+            },
+            MetricResult {
+                name: "Total Verification Time",
+                unit: GOOSE_TIME_UNIT,
+                value: verification.total_time.into(),
+            },
+            MetricResult {
+                name: "Failed Transactions Verifications",
+                unit: "",
+                value: verification_requests.fail_count.into(),
+            },
+            MetricResult {
+                name: "Failed Transaction Submissions",
+                unit: "",
+                value: requests.fail_count.into(),
+            },
+            MetricResult {
+                name: "Max Submission Time",
+                unit: GOOSE_TIME_UNIT,
+                value: requests.max_time.into(),
+            },
+            MetricResult {
+                name: "Min Submission Time",
+                unit: GOOSE_TIME_UNIT,
+                value: requests.min_time.into(),
+            },
+            MetricResult {
+                name: "Average Submission Time",
+                unit: GOOSE_TIME_UNIT,
+                value: transaction_average(requests).into(),
+            },
+            MetricResult {
+                name: "Max Verification Time",
+                unit: GOOSE_TIME_UNIT,
+                value: verification_requests.raw_data.maximum_time.into(),
+            },
+            MetricResult {
+                name: "Min Verification Time",
+                unit: GOOSE_TIME_UNIT,
+                value: verification_requests.raw_data.minimum_time.into(),
+            },
+            MetricResult {
+                name: "Average Verification Time",
+                unit: GOOSE_TIME_UNIT,
+                value: transaction_average(requests).into(),
+            },
+        ]);
+
+        Ok(())
     }
+}
+
+fn transaction_average(requests: &TransactionMetricAggregate) -> f64 {
+    requests.total_time as f64 / requests.counter as f64
 }
 
 impl fmt::Display for MetricResult {
@@ -134,16 +207,44 @@ impl fmt::Display for MetricResult {
 
 impl fmt::Display for BenchmarkReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Self { name, metrics } = self;
+        let Self {
+            name,
+            amount,
+            metrics,
+            last_x_blocks_metrics: last_x_blocks,
+        } = self;
 
-        writeln!(f, "Benchmark Report: {name}")?;
+        writeln!(f, "Benchmark Report: {name} ({amount})")?;
 
         for metric in metrics {
             writeln!(f, "{metric}")?;
         }
 
+        if let Some(last_x_blocks) = last_x_blocks {
+            writeln!(f, "Last {} block metrics:", last_x_blocks.num_blocks)?;
+
+            for metric in &last_x_blocks.metrics {
+                writeln!(f, "{metric}")?;
+            }
+        }
+
         Ok(())
     }
+}
+
+pub fn compute_node_metrics(num_tx_per_block: Vec<u64>) -> [MetricResult; 2] {
+    [
+        MetricResult {
+            name: "Average TPS",
+            unit: "transactions/second",
+            value: average_tps(&num_tx_per_block).into(),
+        },
+        MetricResult {
+            name: "Average Extrinsics per block",
+            unit: "extrinsics/block",
+            value: average_tpb(&num_tx_per_block).into(),
+        },
+    ]
 }
 
 fn average_tps(num_tx_per_block: &[u64]) -> f64 {
@@ -153,30 +254,3 @@ fn average_tps(num_tx_per_block: &[u64]) -> f64 {
 fn average_tpb(num_tx_per_block: &[u64]) -> f64 {
     num_tx_per_block.iter().sum::<u64>() as f64 / num_tx_per_block.len() as f64
 }
-
-pub fn compute_all_metrics(num_tx_per_block: Vec<u64>) -> Vec<MetricResult> {
-    METRICS
-        .iter()
-        .map(|metric| {
-            let value = (metric.compute)(&num_tx_per_block);
-            MetricResult {
-                name: metric.name,
-                unit: metric.unit,
-                value,
-            }
-        })
-        .collect()
-}
-
-pub const METRICS: [Metric; 2] = [
-    Metric {
-        name: "Average TPS",
-        unit: "transactions/second",
-        compute: average_tps,
-    },
-    Metric {
-        name: "Average Extrinsics per block",
-        unit: "extrinsics/block",
-        compute: average_tpb,
-    },
-];

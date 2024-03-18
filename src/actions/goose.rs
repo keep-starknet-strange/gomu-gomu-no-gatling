@@ -1,8 +1,12 @@
-use std::{mem, sync::Arc};
+use std::{
+    mem,
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 
 use color_eyre::eyre::ensure;
 use crossbeam_queue::ArrayQueue;
-use goose::{config::GooseConfiguration, prelude::*};
+use goose::{config::GooseConfiguration, metrics::GooseRequestMetric, prelude::*};
 use serde::{de::DeserializeOwned, Serialize};
 use starknet::{
     accounts::{
@@ -14,7 +18,8 @@ use starknet::{
     macros::{felt, selector},
     providers::{
         jsonrpc::{
-            HttpTransport, HttpTransportError, JsonRpcClientError, JsonRpcMethod, JsonRpcResponse,
+            HttpTransport, HttpTransportError, JsonRpcClientError, JsonRpcError, JsonRpcMethod,
+            JsonRpcResponse,
         },
         JsonRpcClient, ProviderError,
     },
@@ -24,12 +29,11 @@ use starknet::{
 use crate::{
     actions::shoot::{GatlingShooterSetup, CHECK_INTERVAL, MAX_FEE},
     generators::get_rng,
-    utils::wait_for_tx,
 };
 
 use super::shoot::StarknetAccount;
 
-pub async fn erc20(shooter: &GatlingShooterSetup) -> color_eyre::Result<()> {
+pub async fn erc20(shooter: &GatlingShooterSetup) -> color_eyre::Result<GooseMetrics> {
     let environment = shooter.environment()?;
     let erc20_address = environment.erc20_address;
     let config = shooter.config();
@@ -66,9 +70,9 @@ pub async fn erc20(shooter: &GatlingShooterSetup) -> color_eyre::Result<()> {
     let transfer: TransactionFunction =
         Arc::new(move |user| Box::pin(transfer(user, erc20_address)));
 
-    let transfer_wait: TransactionFunction = goose_user_wait_last_tx(shooter.rpc_client().clone());
+    let transfer_wait: TransactionFunction = goose_user_wait_last_tx();
 
-    GooseAttack::initialize_with_config(goose_config.clone())?
+    let metrics = GooseAttack::initialize_with_config(goose_config.clone())?
         .register_scenario(
             scenario!("Transfer")
                 .register_transaction(
@@ -89,7 +93,7 @@ pub async fn erc20(shooter: &GatlingShooterSetup) -> color_eyre::Result<()> {
                 )
                 .register_transaction(
                     transaction!(verify_transactions)
-                        .set_name("Transfer Verification")
+                        .set_name("Verification")
                         .set_sequence(3)
                         .set_on_stop(),
                 ),
@@ -97,10 +101,10 @@ pub async fn erc20(shooter: &GatlingShooterSetup) -> color_eyre::Result<()> {
         .execute()
         .await?;
 
-    Ok(())
+    Ok(metrics)
 }
 
-pub async fn erc721(shooter: &GatlingShooterSetup) -> color_eyre::Result<()> {
+pub async fn erc721(shooter: &GatlingShooterSetup) -> color_eyre::Result<GooseMetrics> {
     let config = shooter.config();
     let environment = shooter.environment()?;
 
@@ -154,9 +158,9 @@ pub async fn erc721(shooter: &GatlingShooterSetup) -> color_eyre::Result<()> {
         Box::pin(async move { mint(user, erc721_address, nonce, &from_account).await })
     });
 
-    let mint_wait: TransactionFunction = goose_user_wait_last_tx(shooter.rpc_client().clone());
+    let mint_wait: TransactionFunction = goose_user_wait_last_tx();
 
-    GooseAttack::initialize_with_config(goose_mint_config.clone())?
+    let metrics = GooseAttack::initialize_with_config(goose_mint_config.clone())?
         .register_scenario(
             scenario!("Minting")
                 .register_transaction(
@@ -173,7 +177,7 @@ pub async fn erc721(shooter: &GatlingShooterSetup) -> color_eyre::Result<()> {
                 )
                 .register_transaction(
                     transaction!(verify_transactions)
-                        .set_name("Mint Verification")
+                        .set_name("Verification")
                         .set_sequence(3)
                         .set_on_stop(),
                 ),
@@ -181,7 +185,7 @@ pub async fn erc721(shooter: &GatlingShooterSetup) -> color_eyre::Result<()> {
         .execute()
         .await?;
 
-    Ok(())
+    Ok(metrics)
 }
 
 #[derive(Debug, Clone)]
@@ -230,21 +234,20 @@ async fn setup(
     }))
 }
 
-fn goose_user_wait_last_tx(provider: Arc<JsonRpcClient<HttpTransport>>) -> TransactionFunction {
+fn goose_user_wait_last_tx() -> TransactionFunction {
     Arc::new(move |user| {
-        let thing = user
+        let tx = user
             .get_session_data::<GooseUserState>()
             .expect("Should be in a goose user with GooseUserState session data")
             .prev_tx
             .last()
-            .expect("At least one transaction should have been done");
-
-        let provider = provider.clone();
+            .copied();
 
         Box::pin(async move {
-            wait_for_tx(&provider, *thing, CHECK_INTERVAL)
-                .await
-                .expect("Transaction should have been successful");
+            // If all transactions failed, we can skip this step
+            if let Some(tx) = tx {
+                wait_for_tx(user, tx).await?;
+            }
 
             Ok(())
         })
@@ -280,7 +283,8 @@ async fn transfer(user: &mut GooseUser, erc20_address: FieldElement) -> Transact
         &account.clone(),
         JsonRpcMethod::AddInvokeTransaction,
     )
-    .await?;
+    .await?
+    .0;
 
     let GooseUserState { nonce, prev_tx, .. } =
         user.get_session_data_mut::<GooseUserState>().expect(
@@ -322,7 +326,8 @@ async fn mint(
         from_account,
         JsonRpcMethod::AddInvokeTransaction,
     )
-    .await?;
+    .await?
+    .0;
 
     user.get_session_data_mut::<GooseUserState>()
         .expect(
@@ -343,18 +348,24 @@ async fn verify_transactions(user: &mut GooseUser) -> TransactionResult {
     );
 
     for tx in transactions {
-        let receipt: MaybePendingTransactionReceipt =
+        let (receipt, mut metrics) =
             send_request(user, JsonRpcMethod::GetTransactionReceipt, tx).await?;
 
         match receipt {
             MaybePendingTransactionReceipt::Receipt(receipt) => match receipt.execution_result() {
                 ExecutionResult::Succeeded => {}
                 ExecutionResult::Reverted { reason } => {
-                    panic!("Transaction {tx:#064x} has been rejected/reverted: {reason}");
+                    let tag = format!("Transaction {tx:#064x} has been rejected/reverted");
+
+                    return user.set_failure(&tag, &mut metrics, None, Some(reason));
                 }
             },
-            MaybePendingTransactionReceipt::PendingReceipt(_) => {
-                panic!("Transaction {tx:#064x} is pending when no transactions should be")
+            MaybePendingTransactionReceipt::PendingReceipt(pending) => {
+                let tag =
+                    format!("Transaction {tx:#064x} is pending when no transactions should be");
+                let body = format!("{pending:?}");
+
+                return user.set_failure(&tag, &mut metrics, None, Some(&body));
             }
         }
     }
@@ -362,13 +373,80 @@ async fn verify_transactions(user: &mut GooseUser) -> TransactionResult {
     Ok(())
 }
 
+const WAIT_FOR_TX_TIMEOUT: Duration = Duration::from_secs(60);
+
+pub async fn wait_for_tx(
+    user: &mut GooseUser,
+    tx_hash: FieldElement,
+) -> Result<(), Box<TransactionError>> {
+    let start = SystemTime::now();
+
+    loop {
+        let (receipt, mut metric) =
+            raw_send_request(user, JsonRpcMethod::GetTransactionReceipt, tx_hash).await?;
+
+        if start.elapsed().unwrap() >= WAIT_FOR_TX_TIMEOUT {
+            let tag = format!("Timeout while waiting for transaction {tx_hash:#064x}");
+            return user.set_failure(&tag, &mut metric, None, None);
+        }
+
+        let reverted_tag = || format!("Transaction {tx_hash:#064x} has been rejected/reverted");
+
+        const TRANSACTION_HASH_NOT_FOUND: i64 = 29;
+
+        match receipt {
+            JsonRpcResponse::Success {
+                result: MaybePendingTransactionReceipt::Receipt(receipt),
+                ..
+            } => match receipt.execution_result() {
+                ExecutionResult::Succeeded => {
+                    return Ok(());
+                }
+                ExecutionResult::Reverted { reason } => {
+                    return user.set_failure(&reverted_tag(), &mut metric, None, Some(reason));
+                }
+            },
+            JsonRpcResponse::Success {
+                result: MaybePendingTransactionReceipt::PendingReceipt(pending),
+                ..
+            } => {
+                if let ExecutionResult::Reverted { reason } = pending.execution_result() {
+                    return user.set_failure(&reverted_tag(), &mut metric, None, Some(reason));
+                }
+                log::debug!("Waiting for transaction {tx_hash:#064x} to be accepted");
+                tokio::time::sleep(CHECK_INTERVAL).await;
+            }
+            JsonRpcResponse::Error {
+                error:
+                    JsonRpcError {
+                        code: TRANSACTION_HASH_NOT_FOUND,
+                        ..
+                    },
+                ..
+            } => {
+                log::debug!("Waiting for transaction {tx_hash:#064x} to show up");
+                tokio::time::sleep(CHECK_INTERVAL).await;
+            }
+            JsonRpcResponse::Error {
+                error: JsonRpcError { code, message },
+                ..
+            } => {
+                let tag = format!("Error Code {code} while waiting for tx {tx_hash:#064x}");
+
+                return user.set_failure(&tag, &mut metric, None, Some(&message));
+            }
+        }
+    }
+}
+
+/// Sends a execution request via goose, returning the successful json rpc response
 pub async fn send_execution<T: DeserializeOwned>(
     user: &mut GooseUser,
     calls: Vec<Call>,
     nonce: FieldElement,
     from_account: &SingleOwnerAccount<Arc<JsonRpcClient<HttpTransport>>, LocalWallet>,
     method: JsonRpcMethod,
-) -> Result<T, Box<TransactionError>> {
+) -> Result<(T, GooseRequestMetric), Box<TransactionError>> {
     let calldata = from_account.encode_calls(&calls);
 
     #[allow(dead_code)] // Removes warning for unused fields, we need them to properly transmute
@@ -403,11 +481,36 @@ pub async fn send_execution<T: DeserializeOwned>(
     send_request(user, method, param).await
 }
 
+/// Sends request via goose, returning the successful json rpc response
 pub async fn send_request<T: DeserializeOwned>(
     user: &mut GooseUser,
     method: JsonRpcMethod,
     param: impl Serialize,
-) -> Result<T, Box<TransactionError>> {
+) -> Result<(T, GooseRequestMetric), Box<TransactionError>> {
+    let (body, mut metrics) = raw_send_request(user, method, param).await?;
+
+    match body {
+        JsonRpcResponse::Success { result, .. } => Ok((result, metrics)),
+        JsonRpcResponse::Error { error, .. } => {
+            // While this is not the actual body we cannot serialize `JsonRpcResponse`
+            // due to it not implementing `Serialize`, and if we were to get the text before
+            // serializing we couldn't map the serde_json error to `TransactionError`.
+            // It also provides the exact same info and this is just debug information
+            let error = error.to_string();
+
+            Err(user
+                .set_failure("RPC Response was Error", &mut metrics, None, Some(&error))
+                .unwrap_err()) // SAFETY: This always returns a error
+        }
+    }
+}
+
+/// Sends request via goose, returning the deserialized response
+pub async fn raw_send_request<T: DeserializeOwned>(
+    user: &mut GooseUser,
+    method: JsonRpcMethod,
+    param: impl Serialize,
+) -> Result<(JsonRpcResponse<T>, GooseRequestMetric), Box<TransactionError>> {
     // Copied from https://docs.rs/starknet-providers/0.9.0/src/starknet_providers/jsonrpc/transports/http.rs.html#21-27
     #[derive(Debug, Serialize)]
     struct JsonRpcRequest<T> {
@@ -424,20 +527,14 @@ pub async fn send_request<T: DeserializeOwned>(
         params: [param],
     };
 
-    let body = user
-        .post_json("/", &request)
-        .await?
+    let goose_response = user.post_json("/", &request).await?;
+
+    let body = goose_response
         .response
         .map_err(TransactionError::Reqwest)?
         .json::<JsonRpcResponse<T>>()
         .await
         .map_err(TransactionError::Reqwest)?;
 
-    match body {
-        JsonRpcResponse::Success { result, .. } => Ok(result),
-        // Returning this error would probably be a good idea,
-        // but the goose error type doesn't allow it and we are
-        // required to return it as a constraint of TransactionFunction
-        JsonRpcResponse::Error { error, .. } => panic!("{error}"),
-    }
+    Ok((body, goose_response.request))
 }
