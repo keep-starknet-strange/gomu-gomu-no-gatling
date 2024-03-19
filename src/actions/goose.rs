@@ -7,6 +7,7 @@ use std::{
 use color_eyre::eyre::ensure;
 use crossbeam_queue::ArrayQueue;
 use goose::{config::GooseConfiguration, metrics::GooseRequestMetric, prelude::*};
+use rand::prelude::SliceRandom;
 use serde::{de::DeserializeOwned, Serialize};
 use starknet::{
     accounts::{
@@ -26,6 +27,7 @@ use starknet::{
 
 use crate::{
     actions::shoot::{GatlingShooterSetup, CHECK_INTERVAL, MAX_FEE},
+    config::ParametersFile,
     generators::get_rng,
 };
 
@@ -258,7 +260,7 @@ pub async fn read_method(
     shooter: &GatlingShooterSetup,
     amount: u64,
     method: JsonRpcMethod,
-    parameters: serde_json::Value,
+    parameters_list: ParametersFile,
 ) -> color_eyre::Result<GooseMetrics> {
     let config = shooter.config();
 
@@ -286,10 +288,19 @@ pub async fn read_method(
     };
 
     let events: TransactionFunction = Arc::new(move |user| {
-        let paramaters = parameters.clone();
+        let mut rng = rand::thread_rng();
+
+        let mut params_list = parameters_list.clone();
+        params_list.shuffle(&mut rng); // Make sure each goose user has their own order
+        let mut paramaters_cycle = params_list.into_iter().cycle();
 
         Box::pin(async move {
-            let _: (serde_json::Value, _) = send_request(user, method, paramaters).await?;
+            let params = paramaters_cycle
+                .next()
+                .expect("Cyclic iterator should never end");
+
+            let _: (serde_json::Value, _) =
+                send_request(user, method, serde_json::Value::Object(params)).await?;
 
             Ok(())
         })

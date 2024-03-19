@@ -2,14 +2,7 @@ use std::sync::Arc;
 
 use ::goose::metrics::GooseMetrics;
 use futures::Future;
-use serde_json::json;
-use starknet::{
-    core::types::BlockId,
-    providers::{
-        jsonrpc::{HttpTransport, JsonRpcMethod},
-        JsonRpcClient, Provider,
-    },
-};
+use starknet::{core::types::BlockId, providers::{jsonrpc::HttpTransport, JsonRpcClient, Provider}};
 
 use crate::{
     config::GatlingConfig,
@@ -67,29 +60,39 @@ pub async fn shoot(config: GatlingConfig) -> color_eyre::Result<()> {
 
     let end_block = shooter.rpc_client().block_number().await?;
 
-    let num_get_events = shooter.config().run.num_get_events;
-    if num_get_events != 0 {
-        let request = json!(
-            {
-                "from_block": BlockId::Number(start_block),
-                "to_block": BlockId::Number(end_block),
-                "address": null,
-                "keys": [],
-                "continuation_token": null,
-                "chunk_size": 10
+    for read_bench in &shooter.config().run.read_benches {
+        let mut params = read_bench.parameters_location.clone();
+
+        // Look into templating json for these if it becomes more complex to handle
+        // liquid_json sees like a relatively popular option for this
+        for parameter in &mut params {
+            if let Some(from) = parameter.get_mut("from_block") {
+                if from.is_null() {
+                    *from = serde_json::to_value(BlockId::Number(start_block))?;
+                }
             }
-        );
 
-        let metrics =
-            goose::read_method(&shooter, num_get_events, JsonRpcMethod::GetEvents, request).await?;
+            if let Some(to) = parameter.get_mut("to_block") {
+                if to.is_null() {
+                    *to = serde_json::to_value(BlockId::Number(end_block))?;
+                }
+            }
+        }
 
-        let mut report = BenchmarkReport::new("Get Events".into(), metrics.scenarios[0].counter);
+        let metrics = goose::read_method(
+            &shooter,
+            read_bench.num_requests,
+            read_bench.method,
+            read_bench.parameters_location.clone(),
+        )
+        .await?;
+
+        let mut report =
+            BenchmarkReport::new(read_bench.name.clone(), metrics.scenarios[0].counter);
 
         report.with_goose_read_metrics(&metrics)?;
 
         global_report.benches.push(report);
-    } else {
-        log::info!("Skipping get events")
     }
 
     let rpc_result = global_report
