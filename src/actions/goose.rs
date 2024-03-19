@@ -40,7 +40,7 @@ pub async fn erc20(shooter: &GatlingShooterSetup) -> color_eyre::Result<GooseMet
 
     ensure!(
         config.run.num_erc20_transfers >= config.run.concurrency,
-        "Too few erc20 transfers for the amount of concurrency"
+        "Too few erc20 transfers for the amount of concurrent users"
     );
 
     // div_euclid will truncate integers when not evenly divisable
@@ -110,7 +110,7 @@ pub async fn erc721(shooter: &GatlingShooterSetup) -> color_eyre::Result<GooseMe
 
     ensure!(
         config.run.num_erc721_mints >= config.run.concurrency,
-        "Too few erc721 mints for the amount of concurrency"
+        "Too few erc721 mints for the amount of concurrent users"
     );
 
     // div_euclid will truncate integers when not evenly divisable
@@ -266,7 +266,7 @@ pub async fn read_method(
 
     ensure!(
         amount >= config.run.concurrency,
-        "Too few reads for the amount of concurrency"
+        "Too few reads for the amount of concurrent users"
     );
 
     // div_euclid will truncate integers when not evenly divisable
