@@ -2,7 +2,10 @@ use std::sync::Arc;
 
 use ::goose::metrics::GooseMetrics;
 use futures::Future;
-use starknet::{core::types::BlockId, providers::{jsonrpc::HttpTransport, JsonRpcClient, Provider}};
+use starknet::{
+    core::types::BlockId,
+    providers::{jsonrpc::HttpTransport, JsonRpcClient, Provider},
+};
 
 use crate::{
     config::GatlingConfig,
