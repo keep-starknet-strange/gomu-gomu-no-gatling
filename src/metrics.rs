@@ -147,6 +147,8 @@ impl BenchmarkReport {
             .get("POST Verification")
             .ok_or_eyre("Found no verification request metrics")?;
 
+        const GOOSE_TIME_UNIT: &str = "milliseconds";
+
         self.metrics.extend_from_slice(&[
             MetricResult {
                 name: "Total Submission Time",

@@ -125,23 +125,16 @@ pub async fn wait_for_tx(
         }
 
         match provider.get_transaction_receipt(tx_hash).await {
-            Ok(Receipt(receipt)) => {
-                // Logic copied from starkli and the following comment too
-                // tWith JSON-RPC, once we get a receipt, the transaction must have been confirmed.
-                // Rejected transactions simply aren't available. This needs to be changed once we
-                // implement the sequencer fallback.
-
-                match receipt.execution_result() {
-                    ExecutionResult::Succeeded => {
-                        return Ok(());
-                    }
-                    ExecutionResult::Reverted { reason } => {
-                        return Err(eyre!(format!(
-                            "Transaction {tx_hash:#064x} has been rejected/reverted: {reason}"
-                        )));
-                    }
+            Ok(Receipt(receipt)) => match receipt.execution_result() {
+                ExecutionResult::Succeeded => {
+                    return Ok(());
                 }
-            }
+                ExecutionResult::Reverted { reason } => {
+                    return Err(eyre!(format!(
+                        "Transaction {tx_hash:#064x} has been rejected/reverted: {reason}"
+                    )));
+                }
+            },
             Ok(PendingReceipt(pending)) => {
                 if let ExecutionResult::Reverted { reason } = pending.execution_result() {
                     return Err(eyre!(format!(

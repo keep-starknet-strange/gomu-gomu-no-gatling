@@ -461,21 +461,14 @@ pub async fn wait_for_tx(
             JsonRpcResponse::Success {
                 result: MaybePendingTransactionReceipt::Receipt(receipt),
                 ..
-            } => {
-                // Logic copied from starkli and the following comment too
-                // tWith JSON-RPC, once we get a receipt, the transaction must have been confirmed.
-                // Rejected transactions simply aren't available. This needs to be changed once we
-                // implement the sequencer fallback.
-
-                match receipt.execution_result() {
-                    ExecutionResult::Succeeded => {
-                        return Ok(());
-                    }
-                    ExecutionResult::Reverted { reason } => {
-                        return user.set_failure(&reverted_tag(), &mut metric, None, Some(reason));
-                    }
+            } => match receipt.execution_result() {
+                ExecutionResult::Succeeded => {
+                    return Ok(());
                 }
-            }
+                ExecutionResult::Reverted { reason } => {
+                    return user.set_failure(&reverted_tag(), &mut metric, None, Some(reason));
+                }
+            },
             JsonRpcResponse::Success {
                 result: MaybePendingTransactionReceipt::PendingReceipt(pending),
                 ..
