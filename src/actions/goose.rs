@@ -64,11 +64,26 @@ pub async fn erc20(shooter: &GatlingShooterSetup) -> color_eyre::Result<GooseMet
         default
     };
 
+    let nonces = Arc::new(ArrayQueue::new(total_transactions as usize));
+    let mut nonce = shooter.deployer_account().get_nonce().await?;
+
+    for _ in 0..total_transactions {
+        nonces
+            .push(nonce)
+            .expect("ArrayQueue has capacity for all mints");
+        nonce += FieldElement::ONE;
+    }
+
     let transfer_setup: TransactionFunction =
         setup(environment.accounts.clone(), user_iterations as usize).await?;
 
-    let transfer: TransactionFunction =
-        Arc::new(move |user| Box::pin(transfer(user, erc20_address)));
+    let transfer: TransactionFunction = Arc::new(move |user| {
+        let nonce = nonces
+            .pop()
+            .expect("Nonce ArrayQueue should have enough nonces for all mints");
+
+        Box::pin(transfer(user, nonce, erc20_address))
+    });
 
     let transfer_wait: TransactionFunction = goose_write_user_wait_last_tx();
 
@@ -134,16 +149,7 @@ pub async fn erc721(shooter: &GatlingShooterSetup) -> color_eyre::Result<GooseMe
         default
     };
 
-    let nonces = Arc::new(ArrayQueue::new(total_transactions as usize));
     let erc721_address = environment.erc721_address;
-    let mut nonce = shooter.deployer_account().get_nonce().await?;
-
-    for _ in 0..total_transactions {
-        nonces
-            .push(nonce)
-            .expect("ArrayQueue has capacity for all mints");
-        nonce += FieldElement::ONE;
-    }
 
     let from_account = shooter.deployer_account().clone();
 
@@ -151,11 +157,8 @@ pub async fn erc721(shooter: &GatlingShooterSetup) -> color_eyre::Result<GooseMe
         setup(environment.accounts.clone(), user_iterations as usize).await?;
 
     let mint: TransactionFunction = Arc::new(move |user| {
-        let nonce = nonces
-            .pop()
-            .expect("Nonce ArrayQueue should have enough nonces for all mints");
         let from_account = from_account.clone();
-        Box::pin(async move { mint(user, erc721_address, nonce, &from_account).await })
+        Box::pin(async move { mint(user, erc721_address, &from_account).await })
     });
 
     let mint_wait: TransactionFunction = goose_write_user_wait_last_tx();
@@ -326,8 +329,12 @@ const VOID_ADDRESS: FieldElement = FieldElement::from_mont([
     576460752272412784,
 ]);
 
-async fn transfer(user: &mut GooseUser, erc20_address: FieldElement) -> TransactionResult {
-    let GooseWriteUserState { account, nonce, .. } = user
+async fn transfer(
+    user: &mut GooseUser,
+    nonce: FieldElement,
+    erc20_address: FieldElement,
+) -> TransactionResult {
+    let GooseWriteUserState { account, .. } = user
         .get_session_data::<GooseWriteUserState>()
         .expect("Should be in a goose user with GooseUserState session data");
 
@@ -342,8 +349,47 @@ async fn transfer(user: &mut GooseUser, erc20_address: FieldElement) -> Transact
     let response: InvokeTransactionResult = send_execution(
         user,
         vec![call],
-        *nonce,
+        nonce,
         &account.clone(),
+        JsonRpcMethod::AddInvokeTransaction,
+    )
+    .await?
+    .0;
+
+    let GooseWriteUserState { prev_tx, .. } =
+        user.get_session_data_mut::<GooseWriteUserState>().expect(
+            "Should be successful as we already asserted that the session data is a GooseUserState",
+        );
+
+    prev_tx.push(response.transaction_hash);
+
+    Ok(())
+}
+
+async fn mint(
+    user: &mut GooseUser,
+    erc721_address: FieldElement,
+    from_account: &SingleOwnerAccount<Arc<JsonRpcClient<HttpTransport>>, LocalWallet>,
+) -> TransactionResult {
+    let GooseWriteUserState { account, nonce, .. } = user
+        .get_session_data::<GooseWriteUserState>()
+        .expect("Should be in a goose user with GooseUserState session data");
+
+    let recipient = account.address();
+
+    let (token_id_low, token_id_high) = (get_rng(), felt!("0x0000"));
+
+    let call = Call {
+        to: erc721_address,
+        selector: selector!("mint"),
+        calldata: vec![recipient, token_id_low, token_id_high],
+    };
+
+    let response: InvokeTransactionResult = send_execution(
+        user,
+        vec![call],
+        *nonce,
+        from_account,
         JsonRpcMethod::AddInvokeTransaction,
     )
     .await?
@@ -357,47 +403,6 @@ async fn transfer(user: &mut GooseUser, erc20_address: FieldElement) -> Transact
     *nonce += FieldElement::ONE;
 
     prev_tx.push(response.transaction_hash);
-
-    Ok(())
-}
-
-async fn mint(
-    user: &mut GooseUser,
-    erc721_address: FieldElement,
-    nonce: FieldElement,
-    from_account: &SingleOwnerAccount<Arc<JsonRpcClient<HttpTransport>>, LocalWallet>,
-) -> TransactionResult {
-    let recipient = user
-        .get_session_data::<GooseWriteUserState>()
-        .expect("Should be in a goose user with GooseUserState session data")
-        .account
-        .clone()
-        .address();
-
-    let (token_id_low, token_id_high) = (get_rng(), felt!("0x0000"));
-
-    let call = Call {
-        to: erc721_address,
-        selector: selector!("mint"),
-        calldata: vec![recipient, token_id_low, token_id_high],
-    };
-
-    let response: InvokeTransactionResult = send_execution(
-        user,
-        vec![call],
-        nonce,
-        from_account,
-        JsonRpcMethod::AddInvokeTransaction,
-    )
-    .await?
-    .0;
-
-    user.get_session_data_mut::<GooseWriteUserState>()
-        .expect(
-            "Should be successful as we already asserted that the session data is a GooseUserState",
-        )
-        .prev_tx
-        .push(response.transaction_hash);
 
     Ok(())
 }
