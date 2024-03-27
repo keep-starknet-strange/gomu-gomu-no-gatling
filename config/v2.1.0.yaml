@@ -22,9 +22,14 @@ setup:
   chain_id: "SN_GOERLI"
 
 run:
+  concurrency: 5
   num_erc20_transfers: 100
   num_erc721_mints: 100
-  concurrency: 5
+  read_benches:
+    - name: "Get Events"
+      num_requests: 100
+      method: "starknet_getEvents"
+      parameters_location: "config/read_params/get_events.json"
 
 report:
   num_blocks: 3

@@ -83,9 +83,15 @@ The configuration is defined by the following spec
 
 - `run`
 
+  - `concurrency`: How many transactions to do simultaneously
   - `num_erc20_transfers`: Number of ERC20 `transfer` transactions
   - `num_erc721_mints`: Number of ERC721 `mint` transactions
-  - `concurrency`: How many transactions to do simultaneously
+  - `read_benches`: A list of read benchmarks to run
+
+    - `name`: The name to write on the output report
+    - `num_requests`: How many times to call this request
+    - `method`: What method to call on the rpc node
+    - `parameters_location`: A file with a array of multiple parameters to use for requests
 
 - `report`
 
