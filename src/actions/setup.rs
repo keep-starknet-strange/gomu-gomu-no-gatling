@@ -1,19 +1,21 @@
 use crate::config::{ContractSourceConfig, GatlingConfig};
-use crate::utils::{compute_contract_address, wait_for_tx};
-use color_eyre::eyre::{Context, OptionExt};
-use color_eyre::{eyre::eyre, Result};
+use crate::utils::wait_for_tx;
+use color_eyre::{
+    eyre::{
+        Context, {bail, eyre},
+    },
+    Result,
+};
 
 use log::{debug, info, warn};
 use starknet::core::types::contract::SierraClass;
 
-use std::collections::HashMap;
 use std::path::Path;
 
 use starknet::accounts::{
     Account, AccountFactory, Call, ConnectedAccount, ExecutionEncoding, OpenZeppelinAccountFactory,
     SingleOwnerAccount,
 };
-use starknet::contract::ContractFactory;
 use starknet::core::types::{
     contract::legacy::LegacyContractClass, BlockId, BlockTag, FieldElement, StarknetError,
 };
@@ -21,7 +23,6 @@ use starknet::macros::{felt, selector};
 use starknet::providers::{jsonrpc::HttpTransport, JsonRpcClient, Provider};
 use starknet::providers::{MaybeUnknownErrorCode, ProviderError, StarknetErrorWithMessage};
 use starknet::signers::{LocalWallet, SigningKey};
-use std::str;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -33,23 +34,15 @@ pub static CHECK_INTERVAL: Duration = Duration::from_millis(500);
 
 pub type StarknetAccount = SingleOwnerAccount<Arc<JsonRpcClient<HttpTransport>>, LocalWallet>;
 
-pub struct GatlingShooterSetup {
+pub struct GatlingSetup {
     config: GatlingConfig,
     starknet_rpc: Arc<JsonRpcClient<HttpTransport>>,
     signer: LocalWallet,
     account: StarknetAccount,
-    nonces: HashMap<FieldElement, FieldElement>,
-    environment: Option<GatlingEnvironment>, // Will be populated in setup phase
+    accounts: Vec<StarknetAccount>,
 }
 
-#[derive(Clone)]
-pub struct GatlingEnvironment {
-    pub erc20_address: FieldElement,
-    pub erc721_address: FieldElement,
-    pub accounts: Vec<StarknetAccount>,
-}
-
-impl GatlingShooterSetup {
+impl GatlingSetup {
     pub async fn from_config(config: GatlingConfig) -> Result<Self> {
         let starknet_rpc: Arc<JsonRpcClient<HttpTransport>> =
             Arc::new(starknet_rpc_provider(Url::parse(&config.clone().rpc.url)?));
@@ -68,26 +61,13 @@ impl GatlingShooterSetup {
             },
         );
 
-        // Fails if nonce is null (which is the case for 1st startup)
-        let cur_nonce = account.get_nonce().await?;
-
-        let mut nonces: HashMap<FieldElement, FieldElement> = HashMap::new();
-        nonces.insert(config.deployer.address, cur_nonce);
-
         Ok(Self {
             config,
             starknet_rpc,
             signer,
             account,
-            nonces,
-            environment: None,
+            accounts: vec![],
         })
-    }
-
-    pub fn environment(&self) -> Result<&GatlingEnvironment> {
-        self.environment
-            .as_ref()
-            .ok_or_eyre("Environment is not yet populated, you should run the setup function first")
     }
 
     pub fn config(&self) -> &GatlingConfig {
@@ -102,33 +82,20 @@ impl GatlingShooterSetup {
         &self.account
     }
 
+    pub fn accounts(&self) -> &[StarknetAccount] {
+        &self.accounts
+    }
+
     /// Setup the simulation.
-    pub async fn setup(&mut self) -> Result<()> {
-        let chain_id = self.starknet_rpc.chain_id().await?.to_bytes_be();
-        let block_number = self.starknet_rpc.block_number().await?;
-        info!(
-            "Shoot - {} @ block number - {}",
-            str::from_utf8(&chain_id)?.trim_start_matches('\0'),
-            block_number
-        );
+    pub async fn setup_accounts(&mut self, erc20_address: FieldElement) -> Result<()> {
+        let account_contract = self.config.setup.account_contract.clone();
 
-        let setup_config = self.config.clone().setup;
+        let account_class_hash = self.declare_contract(&account_contract).await?;
 
-        let erc20_class_hash = self.declare_contract(&setup_config.erc20_contract).await?;
-
-        let erc721_class_hash = self.declare_contract(&setup_config.erc721_contract).await?;
-
-        let account_class_hash = self
-            .declare_contract(&setup_config.account_contract)
-            .await?;
-
-        let execution_encoding = match setup_config.account_contract {
+        let execution_encoding = match account_contract {
             ContractSourceConfig::V0(_) => ExecutionEncoding::Legacy,
             ContractSourceConfig::V1(_) => ExecutionEncoding::New,
         };
-
-        let erc20_address = self.deploy_erc20(erc20_class_hash).await?;
-        let erc721_address = self.deploy_erc721(erc721_class_hash).await?;
 
         let accounts = self
             .create_accounts(
@@ -139,13 +106,7 @@ impl GatlingShooterSetup {
             )
             .await?;
 
-        let environment = GatlingEnvironment {
-            erc20_address,
-            erc721_address,
-            accounts,
-        };
-
-        self.environment = Some(environment);
+        self.accounts = accounts;
 
         Ok(())
     }
@@ -156,12 +117,9 @@ impl GatlingShooterSetup {
         account: StarknetAccount,
         recipient: FieldElement,
         amount: FieldElement,
+        nonce: FieldElement,
     ) -> Result<FieldElement> {
         let from_address = account.address();
-        let nonce = match self.nonces.get(&from_address) {
-            Some(nonce) => *nonce,
-            None => account.get_nonce().await?,
-        };
 
         debug!(
             "Transferring {amount} of {contract_address:#064x} from address {from_address:#064x} to address {recipient:#064x} with nonce={}",
@@ -183,120 +141,7 @@ impl GatlingShooterSetup {
             .send()
             .await?;
 
-        self.nonces.insert(from_address, nonce + FieldElement::ONE);
-
         Ok(result.transaction_hash)
-    }
-
-    async fn deploy_erc721(&mut self, class_hash: FieldElement) -> Result<FieldElement> {
-        let contract_factory = ContractFactory::new(class_hash, self.account.clone());
-        let from_address = self.account.address();
-        let nonce = match self.nonces.get(&from_address) {
-            Some(nonce) => *nonce,
-            None => self.account.get_nonce().await?,
-        };
-
-        let name = selector!("TestNFT");
-        let symbol = selector!("TNFT");
-        let recipient = self.account.address();
-
-        let constructor_args = vec![name, symbol, recipient];
-        let unique = false;
-
-        let address =
-            compute_contract_address(self.config.deployer.salt, class_hash, &constructor_args);
-
-        if let Ok(contract_class_hash) = self
-            .starknet_rpc
-            .get_class_hash_at(BlockId::Tag(BlockTag::Pending), address)
-            .await
-        {
-            if contract_class_hash == class_hash {
-                warn!("ERC721 contract already deployed at address {address:#064x}");
-                return Ok(address);
-            } else {
-                return Err(eyre!("ERC721 contract {address:#064x} already deployed with a different class hash {contract_class_hash:#064x}, expected {class_hash:#064x}"));
-            }
-        }
-
-        let deploy = contract_factory.deploy(constructor_args, self.config.deployer.salt, unique);
-
-        info!("Deploying ERC721 with nonce={}, address={address}", nonce);
-
-        let result = deploy.nonce(nonce).max_fee(MAX_FEE).send().await?;
-        wait_for_tx(&self.starknet_rpc, result.transaction_hash, CHECK_INTERVAL).await?;
-
-        self.nonces.insert(from_address, nonce + FieldElement::ONE);
-
-        debug!(
-            "Deploy ERC721 transaction accepted {:#064x}",
-            result.transaction_hash
-        );
-
-        info!("ERC721 contract deployed at address {:#064x}", address);
-        Ok(address)
-    }
-
-    async fn deploy_erc20(&mut self, class_hash: FieldElement) -> Result<FieldElement> {
-        let contract_factory = ContractFactory::new(class_hash, self.account.clone());
-        let from_address = self.account.address();
-        let nonce = match self.nonces.get(&from_address) {
-            Some(nonce) => *nonce,
-            None => self.account.get_nonce().await?,
-        };
-
-        let name = selector!("TestToken");
-        let symbol = selector!("TT");
-        let decimals = felt!("128");
-        let (initial_supply_low, initial_supply_high) =
-            (felt!("0xFFFFFFFFF"), felt!("0xFFFFFFFFF"));
-        let recipient = self.account.address();
-
-        let constructor_args = vec![
-            name,
-            symbol,
-            decimals,
-            initial_supply_low,
-            initial_supply_high,
-            recipient,
-        ];
-        let unique = false;
-
-        let address =
-            compute_contract_address(self.config.deployer.salt, class_hash, &constructor_args);
-
-        if let Ok(contract_class_hash) = self
-            .starknet_rpc
-            .get_class_hash_at(BlockId::Tag(BlockTag::Pending), address)
-            .await
-        {
-            if contract_class_hash == class_hash {
-                warn!("ERC20 contract already deployed at address {address:#064x}");
-                return Ok(address);
-            } else {
-                return Err(eyre!("ERC20 contract {address:#064x} already deployed with a different class hash {contract_class_hash:#064x}, expected {class_hash:#064x}"));
-            }
-        }
-
-        let deploy = contract_factory.deploy(constructor_args, self.config.deployer.salt, unique);
-
-        info!(
-            "Deploying ERC20 contract with nonce={}, address={:#064x}",
-            nonce, address
-        );
-
-        let result = deploy.nonce(nonce).max_fee(MAX_FEE).send().await?;
-        wait_for_tx(&self.starknet_rpc, result.transaction_hash, CHECK_INTERVAL).await?;
-
-        self.nonces.insert(from_address, nonce + FieldElement::ONE);
-
-        debug!(
-            "Deploy ERC20 transaction accepted {:#064x}",
-            result.transaction_hash
-        );
-
-        info!("ERC20 contract deployed at address {:#064x}", address);
-        Ok(address)
     }
 
     /// Create accounts.
@@ -321,6 +166,8 @@ impl GatlingShooterSetup {
         info!("Creating {} accounts", num_accounts);
 
         let mut deployed_accounts: Vec<StarknetAccount> = Vec::with_capacity(num_accounts);
+
+        let mut nonce = self.account.get_nonce().await?;
 
         for i in 0..num_accounts {
             self.account.set_block_id(BlockId::Tag(BlockTag::Pending));
@@ -361,14 +208,21 @@ impl GatlingShooterSetup {
                     deployed_accounts.push(account);
                     continue;
                 } else {
-                    return Err(eyre!("Account {i} already deployed at address {address:#064x} with a different class hash {account_class_hash:#064x}, expected {class_hash:#064x}"));
+                    bail!("Account {i} already deployed at address {address:#064x} with a different class hash {account_class_hash:#064x}, expected {class_hash:#064x}");
                 }
             }
 
             info!("Funding account {i} at address {address:#064x}");
             let tx_hash = self
-                .transfer(erc20_address, self.account.clone(), address, felt!("0xFFF"))
+                .transfer(
+                    erc20_address,
+                    self.account.clone(),
+                    address,
+                    felt!("0xFFF"),
+                    nonce,
+                )
                 .await?;
+            nonce += FieldElement::ONE;
             wait_for_tx(&self.starknet_rpc, tx_hash, CHECK_INTERVAL).await?;
             let tx_hash = self
                 .transfer(
@@ -376,8 +230,10 @@ impl GatlingShooterSetup {
                     self.account.clone(),
                     address,
                     felt!("0xFFFFFFFFFFFFFFFFFFFF"),
+                    nonce,
                 )
                 .await?;
+            nonce += FieldElement::ONE;
             wait_for_tx(&self.starknet_rpc, tx_hash, CHECK_INTERVAL).await?;
 
             let result = deploy.send().await?;
@@ -435,11 +291,7 @@ impl GatlingShooterSetup {
         }
 
         self.account.set_block_id(BlockId::Tag(BlockTag::Pending));
-        let from_address = self.account.address();
-        let nonce = match self.nonces.get(&from_address) {
-            Some(nonce) => *nonce,
-            None => self.account.get_nonce().await?,
-        };
+        let nonce = self.account.get_nonce().await?;
 
         let tx_resp = self
             .account
@@ -451,8 +303,6 @@ impl GatlingShooterSetup {
             .wrap_err("Could not declare contract")?;
 
         wait_for_tx(&self.starknet_rpc, tx_resp.transaction_hash, CHECK_INTERVAL).await?;
-
-        self.nonces.insert(from_address, nonce + FieldElement::ONE);
 
         info!(
             "Contract declared successfully at {:#064x}",
@@ -477,11 +327,7 @@ impl GatlingShooterSetup {
             contract_path.as_ref().display(),
             class_hash
         );
-        let from_address = self.account.address();
-        let nonce = match self.nonces.get(&from_address) {
-            Some(nonce) => *nonce,
-            None => self.account.get_nonce().await?,
-        };
+        let nonce = self.account.get_nonce().await?;
 
         if self.check_already_declared(class_hash).await? {
             return Ok(class_hash);
@@ -510,12 +356,10 @@ impl GatlingShooterSetup {
             tx_resp.class_hash
         );
 
-        self.nonces.insert(from_address, nonce + FieldElement::ONE);
-
         Ok(tx_resp.class_hash)
     }
 
-    async fn declare_contract(
+    pub async fn declare_contract(
         &mut self,
         contract_source: &crate::config::ContractSourceConfig,
     ) -> Result<FieldElement> {
