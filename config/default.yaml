@@ -13,12 +13,12 @@ setup:
 
   fee_token_address: "0x049d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7"
   num_accounts: 1
-  chain_id: "SN_GOERLI"
+  chain_id: "MADARA"
 
 run:
   concurrency: 5
-  num_erc20_transfers: 1000
-  num_erc721_mints: 1000
+  num_erc20_transfers: 10000
+  num_erc721_mints: 0
   read_benches:
     - name: "Get Events"
       num_requests: 100
