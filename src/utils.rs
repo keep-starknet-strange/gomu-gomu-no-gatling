@@ -154,7 +154,7 @@ pub async fn wait_for_tx(
             Err(err) => {
                 return Err(eyre!(err).wrap_err(format!(
                     "Error while waiting for transaction {tx_hash:#064x}"
-                )))
+                )));
             }
         }
     }
@@ -207,6 +207,7 @@ pub async fn get_blocks_with_txs(
 
         let mut resources = Vec::with_capacity(block_with_txs.transactions.len());
 
+        #[cfg(with_sps)]
         for tx in block_with_txs.transactions.iter() {
             let maybe_receipt = starknet_rpc
                 .get_transaction_receipt(tx.transaction_hash())
@@ -228,6 +229,20 @@ pub async fn get_blocks_with_txs(
             };
 
             resources.push(resource);
+        }
+        #[cfg(not(with_sps))]
+        for _ in block_with_txs.transactions.iter() {
+            resources.push(ExecutionResources {
+                steps: 0,
+                memory_holes: Some(0),
+                range_check_builtin_applications: 0,
+                pedersen_builtin_applications: 0,
+                poseidon_builtin_applications: 0,
+                ec_op_builtin_applications: 0,
+                ecdsa_builtin_applications: 0,
+                bitwise_builtin_applications: 0,
+                keccak_builtin_applications: 0,
+            });
         }
 
         Ok((block_with_txs, resources))

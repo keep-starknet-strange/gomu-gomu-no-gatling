@@ -34,3 +34,7 @@ rand = { version = "0.8.5", features = ["rand_chacha"] }
 lazy_static = "1.4.0"
 sysinfo = "0.30.5"
 crossbeam-queue = "0.3.11"
+
+[features]
+default = []
+with_sps = []
