@@ -10,7 +10,7 @@ use log::debug;
 use starknet::core::types::MaybePendingTransactionReceipt::{PendingReceipt, Receipt};
 use starknet::core::types::{
     BlockId, BlockWithTxs, ExecutionResources, ExecutionResult, MaybePendingBlockWithTxs,
-    StarknetError, TransactionReceipt,
+    StarknetError,
 };
 use starknet::core::{crypto::compute_hash_on_elements, types::FieldElement};
 use starknet::providers::{jsonrpc::HttpTransport, JsonRpcClient, Provider};
@@ -213,7 +213,7 @@ pub async fn get_blocks_with_txs(
                 .get_transaction_receipt(tx.transaction_hash())
                 .await?;
 
-            use TransactionReceipt as TR;
+            use starknet::core::types::TransactionReceipt as TR;
 
             let resource = match maybe_receipt {
                 Receipt(receipt) => match receipt {
