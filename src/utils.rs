@@ -145,9 +145,9 @@ pub async fn wait_for_tx(
                 tokio::time::sleep(check_interval).await;
             }
             Err(ProviderError::StarknetError(StarknetErrorWithMessage {
-                                                 code: MaybeUnknownErrorCode::Known(StarknetError::TransactionHashNotFound),
-                                                 ..
-                                             })) => {
+                code: MaybeUnknownErrorCode::Known(StarknetError::TransactionHashNotFound),
+                ..
+            })) => {
                 debug!("Waiting for transaction {tx_hash:#064x} to show up");
                 tokio::time::sleep(check_interval).await;
             }
@@ -166,7 +166,7 @@ pub async fn wait_for_tx(
 /// without hitting the StarkNet RPC multiple times
 pub async fn get_blocks_with_txs(
     starknet_rpc: &Arc<JsonRpcClient<HttpTransport>>,
-    block_range: impl Iterator<Item=u64>,
+    block_range: impl Iterator<Item = u64>,
 ) -> Result<Vec<(BlockWithTxs, Vec<ExecutionResources>)>> {
     const MAX_CONCURRENT: usize = 50;
 
