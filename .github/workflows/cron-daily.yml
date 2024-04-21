@@ -7,9 +7,11 @@ on:
     - cron: "0 0 * * *"
 
 jobs:
-  lock_closed:
-    name: Lock closed issues/PRs
-    uses: ./.github/workflows/lock-closed.yml
+  # Known issue on exceeding secondary rate limits
+  # https://github.com/dessant/lock-threads/issues/48
+  # lock_closed:
+  #   name: Lock closed issues/PRs
+  #   uses: ./.github/workflows/lock-closed.yml
 
   security_audit:
     name: Security audit
