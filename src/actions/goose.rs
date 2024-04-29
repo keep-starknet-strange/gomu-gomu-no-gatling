@@ -14,7 +14,8 @@ use starknet::{
         Account, Call, ConnectedAccount, ExecutionEncoder, RawExecution, SingleOwnerAccount,
     },
     core::types::{
-        BroadcastedInvokeTransaction, ExecutionResult, FieldElement, MaybePendingTransactionReceipt,
+        BroadcastedInvokeTransaction, BroadcastedInvokeTransactionV1, ExecutionResult,
+        FieldElement, MaybePendingTransactionReceipt,
     },
     providers::{
         jsonrpc::{HttpTransport, JsonRpcError, JsonRpcMethod, JsonRpcResponse},
@@ -254,7 +255,7 @@ pub async fn wait_for_tx(
                 tokio::time::sleep(CHECK_INTERVAL).await;
             }
             JsonRpcResponse::Error {
-                error: JsonRpcError { code, message },
+                error: JsonRpcError { code, message, .. },
                 ..
             } => {
                 let tag = format!("Error Code {code} while waiting for tx {tx_hash:#064x}");
@@ -292,7 +293,7 @@ pub async fn send_execution<T: DeserializeOwned>(
     // see https://github.com/xJonathanLEI/starknet-rs/issues/538
     let raw_exec = unsafe { mem::transmute::<FakeRawExecution, RawExecution>(raw_exec) };
 
-    let param = BroadcastedInvokeTransaction {
+    let param = BroadcastedInvokeTransaction::V1(BroadcastedInvokeTransactionV1 {
         sender_address: from_account.address(),
         calldata,
         max_fee: MAX_FEE,
@@ -302,7 +303,7 @@ pub async fn send_execution<T: DeserializeOwned>(
             .expect("Raw Execution should be correctly constructed for signature"),
         nonce,
         is_query: false,
-    };
+    });
 
     send_request(user, method, param).await
 }

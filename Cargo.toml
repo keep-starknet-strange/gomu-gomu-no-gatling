@@ -15,7 +15,7 @@ opt-level = 3
 [dependencies]
 # Starknet dependencies, currently the same starknet revision as the one in
 # madara https://github.com/keep-starknet-strange/madara/blob/main/Cargo.toml#L268
-starknet = { git = "https://github.com/xJonathanLEI/starknet-rs.git", rev = "64ebc36" }
+starknet = { git = "https://github.com/xJonathanLEI/starknet-rs.git", rev = "2d59636911628260fa460179010bbd00e89de06e" }
 
 goose = "0.17.2"
 env_logger = "0.11.2"

@@ -13,8 +13,8 @@ use starknet::core::types::{
     StarknetError,
 };
 use starknet::core::{crypto::compute_hash_on_elements, types::FieldElement};
+use starknet::providers::ProviderError;
 use starknet::providers::{jsonrpc::HttpTransport, JsonRpcClient, Provider};
-use starknet::providers::{MaybeUnknownErrorCode, ProviderError, StarknetErrorWithMessage};
 use tokio::task::JoinSet;
 
 use std::time::Duration;
@@ -144,10 +144,7 @@ pub async fn wait_for_tx(
                 debug!("Waiting for transaction {tx_hash:#064x} to be accepted");
                 tokio::time::sleep(check_interval).await;
             }
-            Err(ProviderError::StarknetError(StarknetErrorWithMessage {
-                code: MaybeUnknownErrorCode::Known(StarknetError::TransactionHashNotFound),
-                ..
-            })) => {
+            Err(ProviderError::StarknetError(StarknetError::TransactionHashNotFound)) => {
                 debug!("Waiting for transaction {tx_hash:#064x} to show up");
                 tokio::time::sleep(check_interval).await;
             }
@@ -234,14 +231,15 @@ pub async fn get_blocks_with_txs(
         for _ in block_with_txs.transactions.iter() {
             resources.push(ExecutionResources {
                 steps: 0,
-                memory_holes: Some(0),
-                range_check_builtin_applications: 0,
-                pedersen_builtin_applications: 0,
-                poseidon_builtin_applications: 0,
-                ec_op_builtin_applications: 0,
-                ecdsa_builtin_applications: 0,
-                bitwise_builtin_applications: 0,
-                keccak_builtin_applications: 0,
+                memory_holes: None,
+                range_check_builtin_applications: None,
+                pedersen_builtin_applications: None,
+                poseidon_builtin_applications: None,
+                ec_op_builtin_applications: None,
+                ecdsa_builtin_applications: None,
+                bitwise_builtin_applications: None,
+                keccak_builtin_applications: None,
+                segment_arena_builtin: None,
             });
         }
 

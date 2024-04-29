@@ -20,8 +20,8 @@ use starknet::core::types::{
     contract::legacy::LegacyContractClass, BlockId, BlockTag, FieldElement, StarknetError,
 };
 use starknet::macros::{felt, selector};
+use starknet::providers::ProviderError;
 use starknet::providers::{jsonrpc::HttpTransport, JsonRpcClient, Provider};
-use starknet::providers::{MaybeUnknownErrorCode, ProviderError, StarknetErrorWithMessage};
 use starknet::signers::{LocalWallet, SigningKey};
 use std::sync::Arc;
 use std::time::Duration;
@@ -266,10 +266,7 @@ impl GatlingSetup {
                 warn!("Contract already declared at {class_hash:#064x}");
                 Ok(true)
             }
-            Err(ProviderError::StarknetError(StarknetErrorWithMessage {
-                code: MaybeUnknownErrorCode::Known(StarknetError::ClassHashNotFound),
-                ..
-            })) => Ok(false),
+            Err(ProviderError::StarknetError(StarknetError::ClassHashNotFound)) => Ok(false),
             Err(err) => Err(eyre!(err)),
         }
     }
