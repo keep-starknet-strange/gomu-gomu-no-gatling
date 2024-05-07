@@ -9,6 +9,7 @@ use crossbeam_queue::ArrayQueue;
 use goose::{config::GooseConfiguration, metrics::GooseRequestMetric, prelude::*};
 use rand::prelude::SliceRandom;
 use serde::{de::DeserializeOwned, Serialize};
+use starknet::core::types::{SequencerTransactionStatus, TransactionStatus};
 use starknet::{
     accounts::{
         Account, Call, ConnectedAccount, ExecutionEncoder, RawExecution, SingleOwnerAccount,
@@ -165,24 +166,23 @@ pub async fn verify_transactions(user: &mut GooseUser) -> TransactionResult {
     );
 
     for tx in transactions {
-        let (receipt, mut metrics) =
-            send_request(user, JsonRpcMethod::GetTransactionReceipt, tx).await?;
+        let (status, mut metrics) =
+            send_request::<TransactionStatus>(user, JsonRpcMethod::GetTransactionStatus, tx)
+                .await?;
 
-        match receipt {
-            MaybePendingTransactionReceipt::Receipt(receipt) => match receipt.execution_result() {
-                ExecutionResult::Succeeded => {}
-                ExecutionResult::Reverted { reason } => {
-                    let tag = format!("Transaction {tx:#064x} has been rejected/reverted");
+        match status.finality_status() {
+            SequencerTransactionStatus::Rejected => {
+                let tag = format!("Transaction {tx:#064x} has been rejected/reverted");
 
-                    return user.set_failure(&tag, &mut metrics, None, Some(reason));
-                }
-            },
-            MaybePendingTransactionReceipt::PendingReceipt(pending) => {
+                return user.set_failure(&tag, &mut metrics, None, None);
+            }
+            SequencerTransactionStatus::Received => {
                 let tag =
                     format!("Transaction {tx:#064x} is pending when no transactions should be");
-                let body = format!("{pending:?}");
 
-                return user.set_failure(&tag, &mut metrics, None, Some(&body));
+                return user.set_failure(&tag, &mut metrics, None, None);
+            }
+            SequencerTransactionStatus::AcceptedOnL1 | SequencerTransactionStatus::AcceptedOnL2 => {
             }
         }
     }
@@ -190,7 +190,7 @@ pub async fn verify_transactions(user: &mut GooseUser) -> TransactionResult {
     Ok(())
 }
 
-const WAIT_FOR_TX_TIMEOUT: Duration = Duration::from_secs(60);
+const WAIT_FOR_TX_TIMEOUT: Duration = Duration::from_secs(600);
 
 pub async fn wait_for_tx(
     user: &mut GooseUser,

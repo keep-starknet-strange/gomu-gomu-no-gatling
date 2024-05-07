@@ -218,7 +218,7 @@ impl GatlingSetup {
                     erc20_address,
                     self.account.clone(),
                     address,
-                    felt!("0xFFF"),
+                    felt!("0xFFFFF"),
                     nonce,
                 )
                 .await?;
