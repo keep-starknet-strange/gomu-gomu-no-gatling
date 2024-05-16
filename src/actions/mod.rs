@@ -1,5 +1,6 @@
-use std::{fs::File, sync::Arc};
+use std::{fs::File, mem, sync::Arc};
 
+use color_eyre::eyre::bail;
 use log::info;
 
 use crate::{
@@ -16,8 +17,9 @@ mod goose;
 mod setup;
 mod shooters;
 
-pub async fn shoot(config: GatlingConfig) -> color_eyre::Result<()> {
-    let total_txs = config.run.num_erc20_transfers + config.run.num_erc721_mints;
+pub async fn shoot(mut config: GatlingConfig) -> color_eyre::Result<()> {
+    let shooters = mem::take(&mut config.run.shooters);
+    let total_txs: u64 = shooters.iter().map(|s| s.shoot).sum();
 
     let mut shooter_setup = GatlingSetup::from_config(config).await?;
     shooter_setup.setup_accounts().await?;
@@ -31,25 +33,25 @@ pub async fn shoot(config: GatlingConfig) -> color_eyre::Result<()> {
 
     let mut blocks = Option::<(u64, u64)>::None;
 
-    if shooter_setup.config().run.num_erc20_transfers != 0 {
-        let transfer_shooter = TransferShooter::setup(&mut shooter_setup).await?;
-        let report = make_report_over_shooter(transfer_shooter, &shooter_setup).await?;
+    for shooter in shooters {
+        if shooter.shoot == 0 {
+            log::info!("Skipping {} transfers", shooter.name);
+            continue;
+        }
 
-        global_report.benches.push(report.0);
-        blocks.get_or_insert((report.1, report.2)).1 = report.2;
-    } else {
-        log::info!("Skipping erc20 transfers")
-    }
+        let (report, first_block, last_block) = match shooter.name.as_str() {
+            "transfer" => {
+                make_report_over_shooter::<TransferShooter>(&mut shooter_setup, shooter.shoot)
+                    .await?
+            }
+            "mint" => {
+                make_report_over_shooter::<MintShooter>(&mut shooter_setup, shooter.shoot).await?
+            }
+            name => bail!("Shooter `{name}` not found!"),
+        };
 
-    if shooter_setup.config().run.num_erc721_mints != 0 {
-        let shooter = MintShooter::setup(&mut shooter_setup).await?;
-
-        let report = make_report_over_shooter(shooter, &shooter_setup).await?;
-
-        global_report.benches.push(report.0);
-        blocks.get_or_insert((report.1, report.2)).1 = report.2;
-    } else {
-        log::info!("Skipping erc721 mints")
+        global_report.benches.push(report);
+        blocks.get_or_insert((first_block, last_block)).1 = last_block;
     }
 
     let mut all_bench_report = BenchmarkReport::new("".into(), total_txs as usize);
@@ -80,10 +82,11 @@ pub async fn shoot(config: GatlingConfig) -> color_eyre::Result<()> {
 }
 
 async fn make_report_over_shooter<S: Shooter + Send + Sync + 'static>(
-    shooter: S,
-    setup: &GatlingSetup,
+    setup: &mut GatlingSetup,
+    amount: u64,
 ) -> color_eyre::Result<(BenchmarkReport, u64, u64)> {
-    let goose_config = S::get_goose_config(setup.config())?;
+    let shooter = S::setup(setup).await?;
+    let goose_config = S::get_goose_config(setup.config(), amount)?;
 
     let ShooterAttack {
         goose_metrics,

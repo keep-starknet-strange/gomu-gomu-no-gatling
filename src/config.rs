@@ -110,9 +110,14 @@ pub struct DeployerConfig {
 #[derive(Debug, Deserialize, Clone)]
 pub struct RunConfig {
     pub concurrency: u64,
-    pub num_erc20_transfers: u64,
-    pub num_erc721_mints: u64,
+    pub shooters: Vec<Shooters>,
     pub read_benches: Vec<ReadBenchConfig>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct Shooters {
+    pub name: String,
+    pub shoot: u64,
 }
 
 #[derive(Debug, Deserialize, Clone)]

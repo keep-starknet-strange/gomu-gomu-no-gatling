@@ -13,7 +13,6 @@ use tokio::task::JoinSet;
 
 use crate::{
     actions::setup::{GatlingSetup, StarknetAccount, CHECK_INTERVAL, MAX_FEE},
-    config::GatlingConfig,
     generators::get_rng,
     utils::{compute_contract_address, wait_for_tx},
 };
@@ -59,10 +58,6 @@ impl Shooter for MintShooter {
             account_to_erc721_addresses: map,
             recipient: setup.deployer_account().clone(),
         })
-    }
-
-    fn get_amount(config: &GatlingConfig) -> u64 {
-        config.run.num_erc721_mints
     }
 
     fn get_execution_data(&self, account: &StarknetAccount) -> Call {

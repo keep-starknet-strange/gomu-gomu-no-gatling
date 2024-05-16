@@ -11,7 +11,6 @@ use tokio::task::JoinSet;
 
 use crate::{
     actions::setup::{self, GatlingSetup, StarknetAccount, CHECK_INTERVAL, MAX_FEE},
-    config::GatlingConfig,
     utils::{compute_contract_address, wait_for_tx},
 };
 
@@ -118,10 +117,6 @@ impl Shooter for TransferShooter {
             erc20_address: address,
             account: setup.deployer_account().clone(),
         })
-    }
-
-    fn get_amount(config: &GatlingConfig) -> u64 {
-        config.run.num_erc20_transfers
     }
 
     fn get_execution_data(&self, _account: &StarknetAccount) -> Call {

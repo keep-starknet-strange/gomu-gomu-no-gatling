@@ -42,10 +42,11 @@ pub trait Shooter {
     where
         Self: Sized;
 
-    fn get_amount(config: &GatlingConfig) -> u64;
-
-    fn get_goose_config(config: &GatlingConfig) -> color_eyre::Result<GooseConfiguration> {
-        make_goose_config(config, Self::get_amount(config), Self::NAME)
+    fn get_goose_config(
+        config: &GatlingConfig,
+        amount: u64,
+    ) -> color_eyre::Result<GooseConfiguration> {
+        make_goose_config(config, amount, Self::NAME)
     }
 
     async fn goose_attack(

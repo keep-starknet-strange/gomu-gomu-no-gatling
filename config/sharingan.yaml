@@ -17,8 +17,11 @@ setup:
 
 run:
   concurrency: 5
-  num_erc20_transfers: 1200
-  num_erc721_mints: 1200
+  shooters:
+    - name: "transfer"
+      shoot: 1200
+    - name: "mint"
+      shoot: 1200
   read_benches:
     - name: "Get Events"
       num_requests: 100

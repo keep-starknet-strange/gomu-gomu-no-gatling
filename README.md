@@ -84,8 +84,11 @@ The configuration is defined by the following spec
 - `run`
 
   - `concurrency`: How many transactions to do simultaneously
-  - `num_erc20_transfers`: Number of ERC20 `transfer` transactions
-  - `num_erc721_mints`: Number of ERC721 `mint` transactions
+  - `shooter`: A list of write shooter benchmarks to run
+
+    - `name`: The name of the shooter, must be either `transfer` or `mint`
+    - `shoot`: How many transactions to do
+
   - `read_benches`: A list of read benchmarks to run
 
     - `name`: The name to write on the output report
