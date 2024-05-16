@@ -2,7 +2,7 @@ use std::{
     mem,
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, OnceLock,
+        Arc,
     },
     time::{Duration, SystemTime},
 };
@@ -168,7 +168,7 @@ pub async fn read_method(
 
 #[derive(Default)]
 pub struct TransactionBlocks {
-    pub first: OnceLock<u64>,
+    pub first: AtomicU64,
     pub last: AtomicU64,
 }
 
@@ -191,8 +191,12 @@ pub async fn verify_transactions(
             MaybePendingTransactionReceipt::Receipt(TransactionReceipt::Invoke(receipt)) => {
                 match receipt.execution_result {
                     ExecutionResult::Succeeded => {
-                        let _ = blocks.first.set(receipt.block_number);
-                        blocks.last.store(receipt.block_number, Ordering::Relaxed)
+                        blocks
+                            .first
+                            .fetch_min(receipt.block_number, Ordering::Relaxed);
+                        blocks
+                            .last
+                            .fetch_max(receipt.block_number, Ordering::Relaxed);
                     }
                     ExecutionResult::Reverted { .. } => {
                         let tag = format!("Transaction {tx:#064x} has been rejected/reverted");

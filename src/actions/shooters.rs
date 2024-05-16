@@ -99,10 +99,7 @@ pub trait Shooter {
 
         Ok(ShooterAttack {
             goose_metrics: metrics,
-            first_block: blocks
-                .first
-                .into_inner()
-                .ok_or_eyre("No transactions were verified")?,
+            first_block: blocks.first.into_inner(),
             last_block: blocks.last.into_inner(),
         })
     }
