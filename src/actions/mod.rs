@@ -20,10 +20,7 @@ pub async fn shoot(config: GatlingConfig) -> color_eyre::Result<()> {
     let total_txs = config.run.num_erc20_transfers + config.run.num_erc721_mints;
 
     let mut shooter_setup = GatlingSetup::from_config(config).await?;
-    let transfer_shooter = TransferShooter::setup(&mut shooter_setup).await?;
-    shooter_setup
-        .setup_accounts(transfer_shooter.erc20_address)
-        .await?;
+    shooter_setup.setup_accounts().await?;
 
     let mut global_report = GlobalReport {
         users: shooter_setup.config().run.concurrency,
@@ -35,6 +32,7 @@ pub async fn shoot(config: GatlingConfig) -> color_eyre::Result<()> {
     let mut blocks = Option::<(u64, u64)>::None;
 
     if shooter_setup.config().run.num_erc20_transfers != 0 {
+        let transfer_shooter = TransferShooter::setup(&mut shooter_setup).await?;
         let report = make_report_over_shooter(transfer_shooter, &shooter_setup).await?;
 
         global_report.benches.push(report.0);

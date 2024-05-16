@@ -7,9 +7,10 @@ use starknet::{
     macros::{felt, selector},
     providers::Provider,
 };
+use tokio::task::JoinSet;
 
 use crate::{
-    actions::setup::{GatlingSetup, StarknetAccount, CHECK_INTERVAL, MAX_FEE},
+    actions::setup::{self, GatlingSetup, StarknetAccount, CHECK_INTERVAL, MAX_FEE},
     config::GatlingConfig,
     utils::{compute_contract_address, wait_for_tx},
 };
@@ -33,7 +34,7 @@ impl Shooter for TransferShooter {
             .await?;
 
         let contract_factory = ContractFactory::new(class_hash, setup.deployer_account().clone());
-        let nonce = setup.deployer_account().get_nonce().await?;
+        let mut nonce = setup.deployer_account().get_nonce().await?;
 
         let name = selector!("TestToken");
         let symbol = selector!("TT");
@@ -80,6 +81,7 @@ impl Shooter for TransferShooter {
         );
 
         let result = deploy.nonce(nonce).max_fee(MAX_FEE).send().await?;
+        nonce += FieldElement::ONE;
         wait_for_tx(setup.rpc_client(), result.transaction_hash, CHECK_INTERVAL).await?;
 
         debug!(
@@ -88,6 +90,29 @@ impl Shooter for TransferShooter {
         );
 
         info!("ERC20 contract deployed at address {:#064x}", address);
+
+        let mut joinset = JoinSet::new();
+
+        for account in setup.accounts() {
+            info!("Funding account at address {address:#064x}");
+
+            let tx_hash = setup::transfer(
+                setup.deployer_account().clone(),
+                nonce,
+                felt!("0xFFFFF"),
+                address,
+                account.address(),
+            )
+            .await?;
+
+            nonce += FieldElement::ONE;
+            let rpc_client = setup.rpc_client().clone();
+            joinset.spawn(async move { wait_for_tx(&rpc_client, tx_hash, CHECK_INTERVAL).await });
+        }
+
+        while let Some(result) = joinset.join_next().await {
+            result??;
+        }
 
         Ok(TransferShooter {
             erc20_address: address,

@@ -87,7 +87,7 @@ impl GatlingSetup {
     }
 
     /// Setup the simulation.
-    pub async fn setup_accounts(&mut self, erc20_address: FieldElement) -> Result<()> {
+    pub async fn setup_accounts(&mut self) -> Result<()> {
         let account_contract = self.config.setup.account_contract.clone();
 
         let account_class_hash = self.declare_contract(&account_contract).await?;
@@ -102,7 +102,6 @@ impl GatlingSetup {
                 account_class_hash,
                 self.config.run.concurrency as usize,
                 execution_encoding,
-                erc20_address,
             )
             .await?;
 
@@ -111,37 +110,15 @@ impl GatlingSetup {
         Ok(())
     }
 
-    async fn transfer(
-        &mut self,
+    pub async fn transfer(
+        &self,
         contract_address: FieldElement,
         account: StarknetAccount,
         recipient: FieldElement,
         amount: FieldElement,
         nonce: FieldElement,
     ) -> Result<FieldElement> {
-        let from_address = account.address();
-
-        debug!(
-            "Transferring {amount} of {contract_address:#064x} from address {from_address:#064x} to address {recipient:#064x} with nonce={}",
-            nonce,
-        );
-
-        let (amount_low, amount_high) = (amount, felt!("0"));
-
-        let call = Call {
-            to: contract_address,
-            selector: selector!("transfer"),
-            calldata: vec![recipient, amount_low, amount_high],
-        };
-
-        let result = account
-            .execute(vec![call])
-            .max_fee(MAX_FEE)
-            .nonce(nonce)
-            .send()
-            .await?;
-
-        Ok(result.transaction_hash)
+        transfer(account, nonce, amount, contract_address, recipient).await
     }
 
     /// Create accounts.
@@ -161,7 +138,6 @@ impl GatlingSetup {
         class_hash: FieldElement,
         num_accounts: usize,
         execution_encoding: ExecutionEncoding,
-        erc20_address: FieldElement,
     ) -> Result<Vec<StarknetAccount>> {
         info!("Creating {} accounts", num_accounts);
 
@@ -212,18 +188,6 @@ impl GatlingSetup {
                 }
             }
 
-            info!("Funding account {i} at address {address:#064x}");
-            let tx_hash = self
-                .transfer(
-                    erc20_address,
-                    self.account.clone(),
-                    address,
-                    felt!("0xFFFFF"),
-                    nonce,
-                )
-                .await?;
-            nonce += FieldElement::ONE;
-            wait_for_tx(&self.starknet_rpc, tx_hash, CHECK_INTERVAL).await?;
             let tx_hash = self
                 .transfer(
                     fee_token_address,
@@ -368,6 +332,38 @@ impl GatlingSetup {
             }
         }
     }
+}
+
+pub async fn transfer(
+    account: StarknetAccount,
+    nonce: FieldElement,
+    amount: FieldElement,
+    contract_address: FieldElement,
+    recipient: FieldElement,
+) -> color_eyre::Result<FieldElement> {
+    let from_address = account.address();
+
+    debug!(
+        "Transferring {amount} of {contract_address:#064x} from address {from_address:#064x} to address {recipient:#064x} with nonce={}",
+        nonce,
+    );
+
+    let (amount_low, amount_high) = (amount, felt!("0"));
+
+    let call = Call {
+        to: contract_address,
+        selector: selector!("transfer"),
+        calldata: vec![recipient, amount_low, amount_high],
+    };
+
+    let result = account
+        .execute(vec![call])
+        .max_fee(MAX_FEE)
+        .nonce(nonce)
+        .send()
+        .await?;
+
+    Ok(result.transaction_hash)
 }
 
 /// Create a StarkNet RPC provider from a URL.
