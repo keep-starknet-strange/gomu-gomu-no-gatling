@@ -110,6 +110,11 @@ The configuration is defined by the following spec
 gatling shoot -c config/default.yaml
 ```
 
+For a read test:
+```bash
+gatling read -c config/default.yaml
+```
+
 ### Output
 
 The main output of gomu gomu is the report output location specified in specified in the configuration file.

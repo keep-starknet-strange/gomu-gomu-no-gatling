@@ -1,11 +1,8 @@
 use crate::utils::get_blocks_with_txs;
 
-use color_eyre::{
-    eyre::{bail, OptionExt},
-    Result,
-};
+use color_eyre::{eyre::OptionExt, Result};
 
-use goose::metrics::{GooseMetrics, GooseRequestMetricTimingData};
+use goose::metrics::{GooseMetrics, GooseRequestMetricAggregate, GooseRequestMetricTimingData};
 use serde_derive::Serialize;
 use starknet::{
     core::types::{
@@ -14,14 +11,15 @@ use starknet::{
     },
     providers::{jsonrpc::HttpTransport, JsonRpcClient, Provider},
 };
-use std::{fmt, sync::Arc};
+use std::{borrow::Cow, fmt, sync::Arc};
 
 pub const BLOCK_TIME: u64 = 6;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct GlobalReport {
     pub users: u64,
-    pub all_bench_report: BenchmarkReport,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub all_bench_report: Option<BenchmarkReport>,
     pub benches: Vec<BenchmarkReport>,
     pub extra: String,
 }
@@ -51,7 +49,7 @@ const GOOSE_TIME_UNIT: &str = "milliseconds";
 /// "Average TPS: 1000 transactions/second"
 #[derive(Debug, Clone, Serialize)]
 pub struct MetricResult {
-    pub name: &'static str,
+    pub name: Cow<'static, str>,
     pub unit: &'static str,
     pub value: serde_json::Value,
 }
@@ -128,15 +126,6 @@ impl BenchmarkReport {
     }
 
     pub fn with_goose_write_metrics(&mut self, metrics: &GooseMetrics) -> Result<()> {
-        let transactions = metrics
-            .transactions
-            .first()
-            .ok_or_eyre("Could no find scenario's transactions")?;
-
-        let [_setup, submission, _finalizing, verification] = transactions.as_slice() else {
-            bail!("Failed at getting all transaction aggragates")
-        };
-
         let submission_requests = metrics
             .requests
             .get("POST Transaction Submission")
@@ -147,90 +136,8 @@ impl BenchmarkReport {
             .get("POST Verification")
             .ok_or_eyre("Found no verification request metrics")?;
 
-        const GOOSE_TIME_UNIT: &str = "milliseconds";
-
-        self.metrics.extend_from_slice(&[
-            MetricResult {
-                name: "Total Submission Time",
-                unit: GOOSE_TIME_UNIT,
-                value: submission_requests.raw_data.total_time.into(),
-            },
-            MetricResult {
-                name: "Total Verification Time",
-                unit: GOOSE_TIME_UNIT,
-                value: verification.total_time.into(),
-            },
-            MetricResult {
-                name: "Failed Transactions Verifications",
-                unit: "",
-                value: verification_requests.fail_count.into(),
-            },
-            MetricResult {
-                name: "Failed Transaction Submissions",
-                unit: "",
-                value: submission.fail_count.into(),
-            },
-            MetricResult {
-                name: "Max Submission Time",
-                unit: GOOSE_TIME_UNIT,
-                value: submission_requests.raw_data.maximum_time.into(),
-            },
-            MetricResult {
-                name: "Min Submission Time",
-                unit: GOOSE_TIME_UNIT,
-                value: submission_requests.raw_data.minimum_time.into(),
-            },
-            MetricResult {
-                name: "Average Submission Time",
-                unit: GOOSE_TIME_UNIT,
-                value: transaction_average(&submission_requests.raw_data).into(),
-            },
-            MetricResult {
-                name: "Max Verification Time",
-                unit: GOOSE_TIME_UNIT,
-                value: verification_requests.raw_data.maximum_time.into(),
-            },
-            MetricResult {
-                name: "Min Verification Time",
-                unit: GOOSE_TIME_UNIT,
-                value: verification_requests.raw_data.minimum_time.into(),
-            },
-            MetricResult {
-                name: "Average Verification Time",
-                unit: GOOSE_TIME_UNIT,
-                value: transaction_average(&verification_requests.raw_data).into(),
-            },
-        ]);
-
-        if let Some((sub_p50, sub_90)) = calculate_p50_and_p90(&submission_requests.raw_data) {
-            self.metrics.extend_from_slice(&[
-                MetricResult {
-                    name: "P90 Submission Time",
-                    unit: GOOSE_TIME_UNIT,
-                    value: sub_90.into(),
-                },
-                MetricResult {
-                    name: "P50 Submission Time",
-                    unit: GOOSE_TIME_UNIT,
-                    value: sub_p50.into(),
-                },
-            ])
-        }
-
-        if let Some((ver_p50, ver_p90)) = calculate_p50_and_p90(&verification_requests.raw_data) {
-            self.metrics.extend_from_slice(&[
-                MetricResult {
-                    name: "P90 Verification Time",
-                    unit: GOOSE_TIME_UNIT,
-                    value: ver_p90.into(),
-                },
-                MetricResult {
-                    name: "P50 Verification Time",
-                    unit: GOOSE_TIME_UNIT,
-                    value: ver_p50.into(),
-                },
-            ])
-        }
+        self.with_request_metric_aggregate(submission_requests, Some("Submission"));
+        self.with_request_metric_aggregate(verification_requests, Some("Verifcation"));
 
         Ok(())
     }
@@ -241,29 +148,47 @@ impl BenchmarkReport {
             .get("POST Request")
             .ok_or_eyre("Found no read request metrics")?;
 
+        self.with_request_metric_aggregate(requests, None);
+
+        Ok(())
+    }
+
+    fn with_request_metric_aggregate(
+        &mut self,
+        requests: &GooseRequestMetricAggregate,
+        metric: Option<&str>,
+    ) {
+        fn fmt_with_name(template: &'static str, metric: Option<&str>) -> Cow<'static, str> {
+            if let Some(metric) = metric {
+                format!("{metric} {template}").into()
+            } else {
+                template.into()
+            }
+        }
+
         self.metrics.extend_from_slice(&[
             MetricResult {
-                name: "Total Time",
+                name: fmt_with_name("Total Time", metric),
                 unit: GOOSE_TIME_UNIT,
                 value: requests.raw_data.total_time.into(),
             },
             MetricResult {
-                name: "Max Time",
+                name: fmt_with_name("Max Time", metric),
                 unit: GOOSE_TIME_UNIT,
                 value: requests.raw_data.maximum_time.into(),
             },
             MetricResult {
-                name: "Min Time",
+                name: fmt_with_name("Min Time", metric),
                 unit: GOOSE_TIME_UNIT,
                 value: requests.raw_data.minimum_time.into(),
             },
             MetricResult {
-                name: "Average Time",
+                name: fmt_with_name("Average Time", metric),
                 unit: GOOSE_TIME_UNIT,
-                value: (requests.raw_data.total_time as f64 / requests.success_count as f64).into(),
+                value: transaction_average(&requests.raw_data).into(),
             },
             MetricResult {
-                name: "Failed Requests",
+                name: fmt_with_name("Failed Requests", metric),
                 unit: "",
                 value: requests.fail_count.into(),
             },
@@ -272,19 +197,17 @@ impl BenchmarkReport {
         if let Some((ver_p50, ver_p90)) = calculate_p50_and_p90(&requests.raw_data) {
             self.metrics.extend_from_slice(&[
                 MetricResult {
-                    name: "P90 Verification Time",
+                    name: fmt_with_name("P90 Time", metric),
                     unit: GOOSE_TIME_UNIT,
                     value: ver_p90.into(),
                 },
                 MetricResult {
-                    name: "P50 Verification Time",
+                    name: fmt_with_name("P50 Time", metric),
                     unit: GOOSE_TIME_UNIT,
                     value: ver_p50.into(),
                 },
             ])
         }
-
-        Ok(())
     }
 }
 
@@ -357,12 +280,12 @@ pub fn compute_node_metrics(
 
     let mut metrics = vec![
         MetricResult {
-            name: "Average TPS",
+            name: "Average TPS".into(),
             unit: "transactions/second",
             value: (avg_tpb / BLOCK_TIME as f64).into(),
         },
         MetricResult {
-            name: "Average Extrinsics per block",
+            name: "Average Extrinsics per block".into(),
             unit: "extrinsics/block",
             value: avg_tpb.into(),
         },
@@ -387,13 +310,13 @@ pub fn compute_node_metrics(
             .sum();
 
         metrics.push(MetricResult {
-            name: "Average UOPS",
+            name: "Average UOPS".into(),
             unit: "operations/second",
             value: (total_uops as f64 / blocks_with_txs.len() as f64 / BLOCK_TIME as f64).into(),
         });
 
         metrics.push(MetricResult {
-            name: "Average Steps Per Second",
+            name: "Average Steps Per Second".into(),
             unit: "operations/second",
             value: (total_steps as f64 / blocks_with_txs.len() as f64 / BLOCK_TIME as f64).into(),
         });

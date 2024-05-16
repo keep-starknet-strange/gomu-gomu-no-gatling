@@ -25,8 +25,10 @@ pub struct Cli {
 /// Subcommands
 #[derive(Subcommand, Debug)]
 pub enum Command {
-    /// Trigger a load test.
+    /// Trigger a write load test.
     Shoot {},
+    // Trigger a read load test
+    Read {},
 }
 
 #[derive(Debug, Args)]

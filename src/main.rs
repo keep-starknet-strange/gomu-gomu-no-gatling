@@ -36,6 +36,9 @@ async fn main() -> Result<()> {
         Command::Shoot { .. } => {
             actions::shoot(cfg).await?;
         }
+        Command::Read { .. } => {
+            actions::read(cfg).await?;
+        }
     }
 
     Ok(())
