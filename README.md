@@ -110,7 +110,8 @@ The configuration is defined by the following spec
 gatling shoot -c config/default.yaml
 ```
 
-For a read test:
+For read tests:
+
 ```bash
 gatling read -c config/default.yaml
 ```

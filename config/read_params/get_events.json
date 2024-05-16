@@ -1,7 +1,7 @@
 [
   {
-    "from_block": {"block_number": null},
-    "to_block": {"block_number": null},
+    "from_block": { "block_number": null },
+    "to_block": { "block_number": null },
     "address": null,
     "keys": [],
     "continuation_token": null,

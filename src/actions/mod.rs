@@ -50,7 +50,6 @@ pub async fn shoot(config: GatlingConfig) -> color_eyre::Result<()> {
 
         global_report.benches.push(report.0);
         blocks.get_or_insert((report.1, report.2)).1 = report.2;
-
     } else {
         log::info!("Skipping erc721 mints")
     }
@@ -61,8 +60,8 @@ pub async fn shoot(config: GatlingConfig) -> color_eyre::Result<()> {
         info!("Start and End Blocks: {start_block}, {end_block}");
 
         let rpc_result = all_bench_report
-        .with_block_range(shooter_setup.rpc_client(), start_block, end_block)
-        .await;
+            .with_block_range(shooter_setup.rpc_client(), start_block, end_block)
+            .await;
 
         global_report.all_bench_report = Some(all_bench_report);
 
