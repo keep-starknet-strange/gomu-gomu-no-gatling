@@ -18,21 +18,20 @@ opt-level = 3
 starknet = { git = "https://github.com/xJonathanLEI/starknet-rs.git", rev = "2d59636911628260fa460179010bbd00e89de06e" }
 
 goose = "0.17.2"
-env_logger = "0.11.2"
-log = "0.4.17"
+env_logger = "0.11.3"
+log = "0.4.21"
 tokio = { version = "1", features = ["full"] }
 futures = "0.3"
-clap = { version = "4.2.7", features = ["derive"] }
-color-eyre = "0.6.2"
+clap = { version = "4.5.4", features = ["derive"] }
+color-eyre = "0.6.3"
 config = "0.14.0"
 dotenvy = "0.15.7"
-serde = "1.0.163"
-serde_derive = "1.0.163"
-serde_json = { version = "1.0.96", features = ["preserve_order"] }
-url = "2.4.0"
+serde = { version = "1.0.202", features = ["derive"] }
+serde_json = { version = "1.0.117", features = ["preserve_order"] }
+url = "2.5.0"
 rand = { version = "0.8.5", features = ["rand_chacha"] }
 lazy_static = "1.4.0"
-sysinfo = "0.30.5"
+sysinfo = "0.30.12"
 crossbeam-queue = "0.3.11"
 
 [features]

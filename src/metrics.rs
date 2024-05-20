@@ -3,7 +3,7 @@ use crate::utils::get_blocks_with_txs;
 use color_eyre::{eyre::OptionExt, Result};
 
 use goose::metrics::{GooseMetrics, GooseRequestMetricAggregate, GooseRequestMetricTimingData};
-use serde_derive::Serialize;
+use serde::Serialize;
 use starknet::{
     core::types::{
         BlockWithTxs, ExecutionResources, InvokeTransaction, InvokeTransactionV0,
