@@ -9,6 +9,7 @@ use color_eyre::{
 
 use log::{debug, info, warn};
 use starknet::core::types::contract::SierraClass;
+use tokio::task::JoinSet;
 
 use std::path::Path;
 
@@ -145,6 +146,8 @@ impl GatlingSetup {
 
         let mut nonce = self.account.get_nonce().await?;
 
+        let mut deployment_joinset = JoinSet::new();
+
         for i in 0..num_accounts {
             self.account.set_block_id(BlockId::Tag(BlockTag::Pending));
 
@@ -212,9 +215,17 @@ impl GatlingSetup {
 
             deployed_accounts.push(account);
 
-            wait_for_tx(&self.starknet_rpc, result.transaction_hash, CHECK_INTERVAL).await?;
+            let starknet_rpc = self.starknet_rpc.clone();
+
+            deployment_joinset.spawn(async move {
+                wait_for_tx(&starknet_rpc, result.transaction_hash, CHECK_INTERVAL).await
+            });
 
             info!("Account {i} deployed at address {address:#064x}");
+        }
+
+        while let Some(result) = deployment_joinset.join_next().await {
+            result??;
         }
 
         Ok(deployed_accounts)
