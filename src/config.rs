@@ -1,15 +1,21 @@
 //! General configuration
 
+use std::fs::File;
+use std::io::BufReader;
 use std::path::PathBuf;
 
 use color_eyre::eyre::Result;
-use config::{builder::DefaultState, Config, ConfigBuilder, File};
+use config::{builder::DefaultState, Config, ConfigBuilder};
 
-use serde::de::Error as DeError;
 use serde::Deserialize;
-use starknet::core::{
-    types::{contract::CompiledClass, FieldElement},
-    utils::{cairo_short_string_to_felt, CairoShortStringToFeltError},
+use serde::{de::Error as DeError, Deserializer};
+use serde_json::{Map, Value};
+use starknet::{
+    core::{
+        types::{contract::CompiledClass, FieldElement},
+        utils::{cairo_short_string_to_felt, CairoShortStringToFeltError},
+    },
+    providers::jsonrpc::JsonRpcMethod,
 };
 
 /// Configuration for the application.
@@ -103,10 +109,27 @@ pub struct DeployerConfig {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct RunConfig {
-    pub num_erc20_transfers: u64,
-    pub num_erc721_mints: u64,
     pub concurrency: u64,
+    pub shooters: Vec<Shooters>,
+    pub read_benches: Vec<ReadBenchConfig>,
 }
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct Shooters {
+    pub name: String,
+    pub shoot: u64,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct ReadBenchConfig {
+    pub name: String,
+    pub num_requests: u64,
+    pub method: JsonRpcMethod,
+    #[serde(deserialize_with = "parameters_file_deserializer")]
+    pub parameters_location: ParametersFile,
+}
+
+pub type ParametersFile = Vec<Map<String, Value>>;
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct ReportConfig {
@@ -127,7 +150,7 @@ impl GatlingConfig {
     /// Create a new configuration from a file.
     pub fn from_file(path: &str) -> Result<Self> {
         base_config_builder()
-            .add_source(File::with_name(path))
+            .add_source(config::File::with_name(path))
             .build()
             .unwrap()
             .try_deserialize()
@@ -155,4 +178,17 @@ where
         CairoShortStringToFeltError::NonAsciiCharacter => D::Error::custom("non ascii character"),
         CairoShortStringToFeltError::StringTooLong => D::Error::custom("string too long"),
     })
+}
+
+fn parameters_file_deserializer<'de, D>(de: D) -> Result<ParametersFile, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let path = PathBuf::deserialize(de)?;
+
+    let file = File::open(path).expect("Could not open file");
+    let reader = BufReader::new(file);
+    let params =
+        serde_json::from_reader(reader).expect("Could not deserialize read params correctly");
+    Ok(params)
 }

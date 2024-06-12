@@ -1,21 +1,25 @@
-use crate::utils::get_num_tx_per_block;
+use crate::utils::get_blocks_with_txs;
 
-use color_eyre::{
-    eyre::{bail, eyre},
-    Result,
+use color_eyre::{eyre::OptionExt, Result};
+
+use goose::metrics::{GooseMetrics, GooseRequestMetricAggregate, GooseRequestMetricTimingData};
+use serde::Serialize;
+use starknet::{
+    core::types::{
+        BlockWithTxs, ExecutionResources, InvokeTransaction, InvokeTransactionV0,
+        InvokeTransactionV1, L1HandlerTransaction, Transaction,
+    },
+    providers::{jsonrpc::HttpTransport, JsonRpcClient, Provider},
 };
-
-use goose::metrics::{GooseMetrics, TransactionMetricAggregate};
-use serde_derive::Serialize;
-use starknet::providers::{jsonrpc::HttpTransport, JsonRpcClient, Provider};
-use std::fmt;
+use std::{borrow::Cow, fmt, sync::Arc};
 
 pub const BLOCK_TIME: u64 = 6;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct GlobalReport {
     pub users: u64,
-    pub all_bench_report: BenchmarkReport,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub all_bench_report: Option<BenchmarkReport>,
     pub benches: Vec<BenchmarkReport>,
     pub extra: String,
 }
@@ -26,7 +30,7 @@ pub struct GlobalReport {
 /// and returns the metric value as a f64
 /// The name and unit are used for displaying the metric
 ///
-/// ### Example
+/// ### Example
 /// { name: "Average TPS", unit: "transactions/second", compute: average_tps }
 /// "Average TPS: 1000 transactions/second"
 #[derive(PartialEq, Eq, Hash, Clone)]
@@ -36,6 +40,8 @@ pub struct NodeMetrics {
     pub compute: fn(&[u64]) -> f64,
 }
 
+const GOOSE_TIME_UNIT: &str = "milliseconds";
+
 /// A struct that contains the result of a metric computation alognside the name and unit
 /// This struct is used for displaying the metric result
 /// Example:
@@ -43,7 +49,7 @@ pub struct NodeMetrics {
 /// "Average TPS: 1000 transactions/second"
 #[derive(Debug, Clone, Serialize)]
 pub struct MetricResult {
-    pub name: &'static str,
+    pub name: Cow<'static, str>,
     pub unit: &'static str,
     pub value: serde_json::Value,
 }
@@ -80,7 +86,7 @@ impl BenchmarkReport {
 
     pub async fn with_block_range(
         &mut self,
-        starknet_rpc: &JsonRpcClient<HttpTransport>,
+        starknet_rpc: &Arc<JsonRpcClient<HttpTransport>>,
         mut start_block: u64,
         mut end_block: u64,
     ) -> Result<()> {
@@ -91,8 +97,8 @@ impl BenchmarkReport {
             end_block -= 1;
         }
 
-        let num_tx_per_block = get_num_tx_per_block(starknet_rpc, start_block, end_block).await?;
-        let metrics = compute_node_metrics(num_tx_per_block);
+        let blocks_with_txs = get_blocks_with_txs(starknet_rpc, start_block..=end_block).await?;
+        let metrics = compute_node_metrics(blocks_with_txs)?;
 
         self.metrics.extend_from_slice(&metrics);
 
@@ -101,15 +107,15 @@ impl BenchmarkReport {
 
     pub async fn with_last_x_blocks(
         &mut self,
-        starknet_rpc: &JsonRpcClient<HttpTransport>,
+        starknet_rpc: &Arc<JsonRpcClient<HttpTransport>>,
         num_blocks: u64,
     ) -> Result<()> {
         // The last block won't be full of transactions, so we skip it
         let end_block = starknet_rpc.block_number().await? - 1;
         let start_block = end_block - num_blocks;
 
-        let num_tx_per_block = get_num_tx_per_block(starknet_rpc, start_block, end_block).await?;
-        let metrics = compute_node_metrics(num_tx_per_block).to_vec();
+        let blocks_with_txs = get_blocks_with_txs(starknet_rpc, start_block..=end_block).await?;
+        let metrics = compute_node_metrics(blocks_with_txs)?;
 
         self.last_x_blocks_metrics = Some(LastXBlocksMetric {
             num_blocks,
@@ -119,82 +125,113 @@ impl BenchmarkReport {
         Ok(())
     }
 
-    pub fn with_goose_metrics(&mut self, metrics: &GooseMetrics) -> Result<()> {
-        let transactions = metrics
-            .transactions
-            .first()
-            .ok_or(eyre!("Could no find scenario's transactions"))?;
-
-        let [_setup, requests, _finalizing, verification] = transactions.as_slice() else {
-            bail!("Failed at getting all transaction aggragates")
-        };
+    pub fn with_goose_write_metrics(&mut self, metrics: &GooseMetrics) -> Result<()> {
+        let submission_requests = metrics
+            .requests
+            .get("POST Transaction Submission")
+            .ok_or_eyre("Found no submission request metrics")?;
 
         let verification_requests = metrics
             .requests
             .get("POST Verification")
-            .ok_or(eyre!("Found no verification request metrics"))?;
+            .ok_or_eyre("Found no verification request metrics")?;
 
-        const GOOSE_TIME_UNIT: &str = "milliseconds";
-
-        self.metrics.extend_from_slice(&[
-            MetricResult {
-                name: "Total Submission Time",
-                unit: GOOSE_TIME_UNIT,
-                value: requests.total_time.into(),
-            },
-            MetricResult {
-                name: "Total Verification Time",
-                unit: GOOSE_TIME_UNIT,
-                value: verification.total_time.into(),
-            },
-            MetricResult {
-                name: "Failed Transactions Verifications",
-                unit: "",
-                value: verification_requests.fail_count.into(),
-            },
-            MetricResult {
-                name: "Failed Transaction Submissions",
-                unit: "",
-                value: requests.fail_count.into(),
-            },
-            MetricResult {
-                name: "Max Submission Time",
-                unit: GOOSE_TIME_UNIT,
-                value: requests.max_time.into(),
-            },
-            MetricResult {
-                name: "Min Submission Time",
-                unit: GOOSE_TIME_UNIT,
-                value: requests.min_time.into(),
-            },
-            MetricResult {
-                name: "Average Submission Time",
-                unit: GOOSE_TIME_UNIT,
-                value: transaction_average(requests).into(),
-            },
-            MetricResult {
-                name: "Max Verification Time",
-                unit: GOOSE_TIME_UNIT,
-                value: verification_requests.raw_data.maximum_time.into(),
-            },
-            MetricResult {
-                name: "Min Verification Time",
-                unit: GOOSE_TIME_UNIT,
-                value: verification_requests.raw_data.minimum_time.into(),
-            },
-            MetricResult {
-                name: "Average Verification Time",
-                unit: GOOSE_TIME_UNIT,
-                value: transaction_average(requests).into(),
-            },
-        ]);
+        self.with_request_metric_aggregate(submission_requests, Some("Submission"));
+        self.with_request_metric_aggregate(verification_requests, Some("Verifcation"));
 
         Ok(())
     }
+
+    pub fn with_goose_read_metrics(&mut self, metrics: &GooseMetrics) -> color_eyre::Result<()> {
+        let requests = metrics
+            .requests
+            .get("POST Request")
+            .ok_or_eyre("Found no read request metrics")?;
+
+        self.with_request_metric_aggregate(requests, None);
+
+        Ok(())
+    }
+
+    fn with_request_metric_aggregate(
+        &mut self,
+        requests: &GooseRequestMetricAggregate,
+        metric: Option<&str>,
+    ) {
+        fn fmt_with_name(template: &'static str, metric: Option<&str>) -> Cow<'static, str> {
+            if let Some(metric) = metric {
+                format!("{metric} {template}").into()
+            } else {
+                template.into()
+            }
+        }
+
+        self.metrics.extend_from_slice(&[
+            MetricResult {
+                name: fmt_with_name("Total Time", metric),
+                unit: GOOSE_TIME_UNIT,
+                value: requests.raw_data.total_time.into(),
+            },
+            MetricResult {
+                name: fmt_with_name("Max Time", metric),
+                unit: GOOSE_TIME_UNIT,
+                value: requests.raw_data.maximum_time.into(),
+            },
+            MetricResult {
+                name: fmt_with_name("Min Time", metric),
+                unit: GOOSE_TIME_UNIT,
+                value: requests.raw_data.minimum_time.into(),
+            },
+            MetricResult {
+                name: fmt_with_name("Average Time", metric),
+                unit: GOOSE_TIME_UNIT,
+                value: transaction_average(&requests.raw_data).into(),
+            },
+            MetricResult {
+                name: fmt_with_name("Failed Requests", metric),
+                unit: "",
+                value: requests.fail_count.into(),
+            },
+        ]);
+
+        if let Some((ver_p50, ver_p90)) = calculate_p50_and_p90(&requests.raw_data) {
+            self.metrics.extend_from_slice(&[
+                MetricResult {
+                    name: fmt_with_name("P90 Time", metric),
+                    unit: GOOSE_TIME_UNIT,
+                    value: ver_p90.into(),
+                },
+                MetricResult {
+                    name: fmt_with_name("P50 Time", metric),
+                    unit: GOOSE_TIME_UNIT,
+                    value: ver_p50.into(),
+                },
+            ])
+        }
+    }
 }
 
-fn transaction_average(requests: &TransactionMetricAggregate) -> f64 {
-    requests.total_time as f64 / requests.counter as f64
+fn transaction_average(timings: &GooseRequestMetricTimingData) -> f64 {
+    timings.total_time as f64 / timings.counter as f64
+}
+
+fn calculate_p50_and_p90(timing_data: &GooseRequestMetricTimingData) -> Option<(usize, usize)> {
+    let p50_idx = (timing_data.counter * 50) / 100;
+
+    let p90_idx = (timing_data.counter * 90) / 100;
+
+    let mut ordered_times = timing_data
+        .times
+        .iter()
+        .flat_map(|(time, &amount)| std::iter::repeat(time).take(amount));
+
+    // These should only return None when there is only 1 or 0 times in the data
+    let &p50 = ordered_times.nth(p50_idx)?;
+
+    // p50 already iterated some out, so we subtract it's idx from here
+    let &p90 = ordered_times.nth(p90_idx - p50_idx)?;
+
+    Some((p50, p90))
 }
 
 impl fmt::Display for MetricResult {
@@ -232,25 +269,75 @@ impl fmt::Display for BenchmarkReport {
     }
 }
 
-pub fn compute_node_metrics(num_tx_per_block: Vec<u64>) -> [MetricResult; 2] {
-    [
+pub fn compute_node_metrics(
+    blocks_with_txs: Vec<(BlockWithTxs, Vec<ExecutionResources>)>,
+) -> Result<Vec<MetricResult>> {
+    let total_transactions: usize = blocks_with_txs
+        .iter()
+        .map(|(b, _)| b.transactions.len())
+        .sum();
+    let avg_tpb = total_transactions as f64 / blocks_with_txs.len() as f64;
+
+    let mut metrics = vec![
         MetricResult {
-            name: "Average TPS",
+            name: "Average TPS".into(),
             unit: "transactions/second",
-            value: average_tps(&num_tx_per_block).into(),
+            value: (avg_tpb / BLOCK_TIME as f64).into(),
         },
         MetricResult {
-            name: "Average Extrinsics per block",
+            name: "Average Extrinsics per block".into(),
             unit: "extrinsics/block",
-            value: average_tpb(&num_tx_per_block).into(),
+            value: avg_tpb.into(),
         },
-    ]
+    ];
+
+    let (first_block, _) = blocks_with_txs.first().ok_or_eyre("No first block")?;
+    let (last_block, _) = blocks_with_txs.last().ok_or_eyre("No last block")?;
+
+    if first_block.timestamp != last_block.timestamp {
+        let total_uops: u64 = blocks_with_txs
+            .iter()
+            .flat_map(|(b, _)| &b.transactions)
+            .map(tx_get_user_operations)
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .sum();
+
+        let total_steps: u64 = blocks_with_txs
+            .iter()
+            .flat_map(|(_, r)| r)
+            .map(|resource| resource.steps)
+            .sum();
+
+        metrics.push(MetricResult {
+            name: "Average UOPS".into(),
+            unit: "operations/second",
+            value: (total_uops as f64 / blocks_with_txs.len() as f64 / BLOCK_TIME as f64).into(),
+        });
+
+        metrics.push(MetricResult {
+            name: "Average Steps Per Second".into(),
+            unit: "operations/second",
+            value: (total_steps as f64 / blocks_with_txs.len() as f64 / BLOCK_TIME as f64).into(),
+        });
+    }
+
+    Ok(metrics)
 }
 
-fn average_tps(num_tx_per_block: &[u64]) -> f64 {
-    average_tpb(num_tx_per_block) / BLOCK_TIME as f64
-}
+fn tx_get_user_operations(tx: &Transaction) -> Result<u64> {
+    Ok(match tx {
+        Transaction::Invoke(
+            InvokeTransaction::V0(InvokeTransactionV0 { calldata, .. })
+            | InvokeTransaction::V1(InvokeTransactionV1 { calldata, .. }),
+        )
+        | Transaction::L1Handler(L1HandlerTransaction { calldata, .. }) => {
+            let &user_operations = calldata
+                .first()
+                .ok_or_eyre("Expected calldata to have at least one field element")?;
 
-fn average_tpb(num_tx_per_block: &[u64]) -> f64 {
-    num_tx_per_block.iter().sum::<u64>() as f64 / num_tx_per_block.len() as f64
+            user_operations.try_into()?
+        }
+        _ => 1, // Other txs can be considered as 1 uop
+    })
 }

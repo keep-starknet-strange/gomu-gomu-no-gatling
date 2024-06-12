@@ -16,9 +16,17 @@ setup:
   chain_id: "KATANA"
 
 run:
-  num_erc20_transfers: 300
-  num_erc721_mints: 300
   concurrency: 5
+  shooters:
+    - name: "transfer"
+      shoot: 300
+    - name: "mint"
+      shoot: 300
+  read_benches:
+    - name: "Get Events"
+      num_requests: 100
+      method: "starknet_getEvents"
+      parameters_location: "config/read_params/get_events.json"
 
 report:
   num_blocks: 4

@@ -16,9 +16,17 @@ setup:
   chain_id: "SN_GOERLI"
 
 run:
-  num_erc20_transfers: 1200
-  num_erc721_mints: 1200
   concurrency: 5
+  shooters:
+    - name: "transfer"
+      shoot: 1200
+    - name: "mint"
+      shoot: 1200
+  read_benches:
+    - name: "Get Events"
+      num_requests: 100
+      method: "starknet_getEvents"
+      parameters_location: "config/read_params/get_events.json"
 
 report:
   num_blocks: 4

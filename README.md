@@ -83,9 +83,18 @@ The configuration is defined by the following spec
 
 - `run`
 
-  - `num_erc20_transfers`: Number of ERC20 `transfer` transactions
-  - `num_erc721_mints`: Number of ERC721 `mint` transactions
   - `concurrency`: How many transactions to do simultaneously
+  - `shooter`: A list of write shooter benchmarks to run
+
+    - `name`: The name of the shooter, must be either `transfer` or `mint`
+    - `shoot`: How many transactions to do
+
+  - `read_benches`: A list of read benchmarks to run
+
+    - `name`: The name to write on the output report
+    - `num_requests`: How many times to call this request
+    - `method`: What method to call on the rpc node
+    - `parameters_location`: A file with a array of multiple parameters to use for requests
 
 - `report`
 
@@ -102,6 +111,12 @@ The configuration is defined by the following spec
 
 ```bash
 gatling shoot -c config/default.yaml
+```
+
+For read tests:
+
+```bash
+gatling read -c config/default.yaml
 ```
 
 ### Output

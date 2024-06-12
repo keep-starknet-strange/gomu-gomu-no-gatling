@@ -1,207 +1,81 @@
 use std::{
     mem,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
     time::{Duration, SystemTime},
 };
 
 use color_eyre::eyre::ensure;
 use crossbeam_queue::ArrayQueue;
 use goose::{config::GooseConfiguration, metrics::GooseRequestMetric, prelude::*};
+use rand::prelude::SliceRandom;
 use serde::{de::DeserializeOwned, Serialize};
+use starknet::core::types::{SequencerTransactionStatus, TransactionReceipt, TransactionStatus};
 use starknet::{
     accounts::{
         Account, Call, ConnectedAccount, ExecutionEncoder, RawExecution, SingleOwnerAccount,
     },
     core::types::{
-        ExecutionResult, FieldElement, InvokeTransactionResult, MaybePendingTransactionReceipt,
+        BroadcastedInvokeTransaction, BroadcastedInvokeTransactionV1, ExecutionResult,
+        FieldElement, MaybePendingTransactionReceipt,
     },
-    macros::{felt, selector},
     providers::{
-        jsonrpc::{
-            HttpTransport, HttpTransportError, JsonRpcClientError, JsonRpcError, JsonRpcMethod,
-            JsonRpcResponse,
-        },
+        jsonrpc::{HttpTransport, JsonRpcError, JsonRpcMethod, JsonRpcResponse},
         JsonRpcClient, ProviderError,
     },
     signers::LocalWallet,
 };
 
 use crate::{
-    actions::shoot::{GatlingShooterSetup, CHECK_INTERVAL, MAX_FEE},
-    generators::get_rng,
+    actions::setup::{GatlingSetup, CHECK_INTERVAL, MAX_FEE},
+    config::{GatlingConfig, ParametersFile},
 };
 
-use super::shoot::StarknetAccount;
+use super::setup::StarknetAccount;
 
-pub async fn erc20(shooter: &GatlingShooterSetup) -> color_eyre::Result<GooseMetrics> {
-    let environment = shooter.environment()?;
-    let erc20_address = environment.erc20_address;
-    let config = shooter.config();
-
+pub fn make_goose_config(
+    config: &GatlingConfig,
+    amount: u64,
+    name: &'static str,
+) -> color_eyre::Result<GooseConfiguration> {
     ensure!(
-        config.run.num_erc20_transfers >= config.run.concurrency,
-        "Too few erc20 transfers for the amount of concurrency"
+        amount >= config.run.concurrency,
+        "Too few {name} for the amount of concurrent users"
     );
 
     // div_euclid will truncate integers when not evenly divisable
-    let user_iterations = config
-        .run
-        .num_erc20_transfers
-        .div_euclid(config.run.concurrency);
-    // this will always be a multiple of concurrency, unlike num_erc20_transfers
+    let user_iterations = amount.div_euclid(config.run.concurrency);
+    // this will always be a multiple of concurrency, unlike the provided amount
     let total_transactions = user_iterations * config.run.concurrency;
 
     // If these are not equal that means user_iterations was truncated
-    if total_transactions != config.run.num_erc20_transfers {
-        log::warn!("Number of erc20 transfers is not evenly divisble by concurrency, doing {total_transactions} transfers instead");
+    if total_transactions != amount {
+        log::warn!("Number of {name} is not evenly divisble by concurrency, doing {total_transactions} calls instead");
     }
 
-    let goose_config = {
+    Ok({
         let mut default = GooseConfiguration::default();
-        default.host = config.rpc.url.clone();
+        default.host.clone_from(&config.rpc.url);
         default.iterations = user_iterations as usize;
         default.users = Some(config.run.concurrency as usize);
         default
-    };
-
-    let transfer_setup: TransactionFunction =
-        setup(environment.accounts.clone(), user_iterations as usize).await?;
-
-    let transfer: TransactionFunction =
-        Arc::new(move |user| Box::pin(transfer(user, erc20_address)));
-
-    let transfer_wait: TransactionFunction = goose_user_wait_last_tx();
-
-    let metrics = GooseAttack::initialize_with_config(goose_config.clone())?
-        .register_scenario(
-            scenario!("Transfer")
-                .register_transaction(
-                    Transaction::new(transfer_setup)
-                        .set_name("Transfer Setup")
-                        .set_on_start(),
-                )
-                .register_transaction(
-                    Transaction::new(transfer)
-                        .set_name("Transfer")
-                        .set_sequence(1),
-                )
-                .register_transaction(
-                    Transaction::new(transfer_wait)
-                        .set_name("Transfer Finalizing")
-                        .set_sequence(2)
-                        .set_on_stop(),
-                )
-                .register_transaction(
-                    transaction!(verify_transactions)
-                        .set_name("Verification")
-                        .set_sequence(3)
-                        .set_on_stop(),
-                ),
-        )
-        .execute()
-        .await?;
-
-    Ok(metrics)
-}
-
-pub async fn erc721(shooter: &GatlingShooterSetup) -> color_eyre::Result<GooseMetrics> {
-    let config = shooter.config();
-    let environment = shooter.environment()?;
-
-    ensure!(
-        config.run.num_erc721_mints >= config.run.concurrency,
-        "Too few erc721 mints for the amount of concurrency"
-    );
-
-    // div_euclid will truncate integers when not evenly divisable
-    let user_iterations = config
-        .run
-        .num_erc721_mints
-        .div_euclid(config.run.concurrency);
-    // this will always be a multiple of concurrency, unlike num_erc721_mints
-    let total_transactions = user_iterations * config.run.concurrency;
-
-    // If these are not equal that means user_iterations was truncated
-    if total_transactions != config.run.num_erc721_mints {
-        log::warn!("Number of erc721 mints is not evenly divisble by concurrency, doing {total_transactions} mints instead");
-    }
-
-    let goose_mint_config = {
-        let mut default = GooseConfiguration::default();
-        default.host = config.rpc.url.clone();
-        default.iterations = user_iterations as usize;
-        default.users = Some(config.run.concurrency as usize);
-        default
-    };
-
-    let nonces = Arc::new(ArrayQueue::new(total_transactions as usize));
-    let erc721_address = environment.erc721_address;
-    let mut nonce = shooter.deployer_account().get_nonce().await?;
-
-    for _ in 0..total_transactions {
-        nonces
-            .push(nonce)
-            .expect("ArrayQueue has capacity for all mints");
-        nonce += FieldElement::ONE;
-    }
-
-    let from_account = shooter.deployer_account().clone();
-
-    let mint_setup: TransactionFunction =
-        setup(environment.accounts.clone(), user_iterations as usize).await?;
-
-    let mint: TransactionFunction = Arc::new(move |user| {
-        let nonce = nonces
-            .pop()
-            .expect("Nonce ArrayQueue should have enough nonces for all mints");
-        let from_account = from_account.clone();
-        Box::pin(async move { mint(user, erc721_address, nonce, &from_account).await })
-    });
-
-    let mint_wait: TransactionFunction = goose_user_wait_last_tx();
-
-    let metrics = GooseAttack::initialize_with_config(goose_mint_config.clone())?
-        .register_scenario(
-            scenario!("Minting")
-                .register_transaction(
-                    Transaction::new(mint_setup)
-                        .set_name("Mint Setup")
-                        .set_on_start(),
-                )
-                .register_transaction(Transaction::new(mint).set_name("Minting").set_sequence(1))
-                .register_transaction(
-                    Transaction::new(mint_wait)
-                        .set_name("Mint Finalizing")
-                        .set_sequence(2)
-                        .set_on_stop(),
-                )
-                .register_transaction(
-                    transaction!(verify_transactions)
-                        .set_name("Verification")
-                        .set_sequence(3)
-                        .set_on_stop(),
-                ),
-        )
-        .execute()
-        .await?;
-
-    Ok(metrics)
+    })
 }
 
 #[derive(Debug, Clone)]
-struct GooseUserState {
-    account: StarknetAccount,
-    nonce: FieldElement,
-    prev_tx: Vec<FieldElement>,
+pub struct GooseWriteUserState {
+    pub account: StarknetAccount,
+    pub nonce: FieldElement,
+    pub prev_tx: Vec<FieldElement>,
 }
 
-pub type RpcError = ProviderError<JsonRpcClientError<HttpTransportError>>;
-
-impl GooseUserState {
+impl GooseWriteUserState {
     pub async fn new(
         account: StarknetAccount,
         transactions_amount: usize,
-    ) -> Result<Self, RpcError> {
+    ) -> Result<Self, ProviderError> {
         Ok(Self {
             nonce: account.get_nonce().await?,
             account,
@@ -210,14 +84,14 @@ impl GooseUserState {
     }
 }
 
-async fn setup(
+pub async fn setup(
     accounts: Vec<StarknetAccount>,
     transactions_amount: usize,
-) -> Result<TransactionFunction, RpcError> {
+) -> Result<TransactionFunction, ProviderError> {
     let queue = ArrayQueue::new(accounts.len());
     for account in accounts {
         queue
-            .push(GooseUserState::new(account, transactions_amount).await?)
+            .push(GooseWriteUserState::new(account, transactions_amount).await?)
             .expect("Queue should have enough space for all accounts as it's length is from the accounts vec");
     }
     let queue = Arc::new(queue);
@@ -234,10 +108,10 @@ async fn setup(
     }))
 }
 
-fn goose_user_wait_last_tx() -> TransactionFunction {
+pub fn goose_write_user_wait_last_tx() -> TransactionFunction {
     Arc::new(move |user| {
         let tx = user
-            .get_session_data::<GooseUserState>()
+            .get_session_data::<GooseWriteUserState>()
             .expect("Should be in a goose user with GooseUserState session data")
             .prev_tx
             .last()
@@ -246,7 +120,7 @@ fn goose_user_wait_last_tx() -> TransactionFunction {
         Box::pin(async move {
             // If all transactions failed, we can skip this step
             if let Some(tx) = tx {
-                wait_for_tx(user, tx).await?;
+                wait_for_tx_with_goose(user, tx).await?;
             }
 
             Ok(())
@@ -254,118 +128,108 @@ fn goose_user_wait_last_tx() -> TransactionFunction {
     })
 }
 
-// Hex: 0xdead
-// from_hex_be isn't const whereas from_mont is
-const VOID_ADDRESS: FieldElement = FieldElement::from_mont([
-    18446744073707727457,
-    18446744073709551615,
-    18446744073709551615,
-    576460752272412784,
-]);
+pub async fn read_method(
+    shooter: &GatlingSetup,
+    amount: u64,
+    method: JsonRpcMethod,
+    parameters_list: ParametersFile,
+) -> color_eyre::Result<GooseMetrics> {
+    let goose_read_config = make_goose_config(shooter.config(), amount, "read calls")?;
 
-async fn transfer(user: &mut GooseUser, erc20_address: FieldElement) -> TransactionResult {
-    let GooseUserState { account, nonce, .. } = user
-        .get_session_data::<GooseUserState>()
-        .expect("Should be in a goose user with GooseUserState session data");
+    let reads: TransactionFunction = Arc::new(move |user| {
+        let mut rng = rand::thread_rng();
 
-    let (amount_low, amount_high) = (felt!("1"), felt!("0"));
+        let mut params_list = parameters_list.clone();
+        params_list.shuffle(&mut rng); // Make sure each goose user has their own order
+        let mut paramaters_cycle = params_list.into_iter().cycle();
 
-    let call = Call {
-        to: erc20_address,
-        selector: selector!("transfer"),
-        calldata: vec![VOID_ADDRESS, amount_low, amount_high],
-    };
+        Box::pin(async move {
+            let params = paramaters_cycle
+                .next()
+                .expect("Cyclic iterator should never end");
 
-    let response: InvokeTransactionResult = send_execution(
-        user,
-        vec![call],
-        *nonce,
-        &account.clone(),
-        JsonRpcMethod::AddInvokeTransaction,
-    )
-    .await?
-    .0;
+            let _: (serde_json::Value, _) =
+                send_request(user, method, serde_json::Value::Object(params)).await?;
 
-    let GooseUserState { nonce, prev_tx, .. } =
-        user.get_session_data_mut::<GooseUserState>().expect(
-            "Should be successful as we already asserted that the session data is a GooseUserState",
-        );
+            Ok(())
+        })
+    });
 
-    *nonce += FieldElement::ONE;
-
-    prev_tx.push(response.transaction_hash);
-
-    Ok(())
-}
-
-async fn mint(
-    user: &mut GooseUser,
-    erc721_address: FieldElement,
-    nonce: FieldElement,
-    from_account: &SingleOwnerAccount<Arc<JsonRpcClient<HttpTransport>>, LocalWallet>,
-) -> TransactionResult {
-    let recipient = user
-        .get_session_data::<GooseUserState>()
-        .expect("Should be in a goose user with GooseUserState session data")
-        .account
-        .clone()
-        .address();
-
-    let (token_id_low, token_id_high) = (get_rng(), felt!("0x0000"));
-
-    let call = Call {
-        to: erc721_address,
-        selector: selector!("mint"),
-        calldata: vec![recipient, token_id_low, token_id_high],
-    };
-
-    let response: InvokeTransactionResult = send_execution(
-        user,
-        vec![call],
-        nonce,
-        from_account,
-        JsonRpcMethod::AddInvokeTransaction,
-    )
-    .await?
-    .0;
-
-    user.get_session_data_mut::<GooseUserState>()
-        .expect(
-            "Should be successful as we already asserted that the session data is a GooseUserState",
+    let metrics = GooseAttack::initialize_with_config(goose_read_config)?
+        .register_scenario(
+            scenario!("Read Metric")
+                .register_transaction(Transaction::new(reads).set_name("Request")),
         )
-        .prev_tx
-        .push(response.transaction_hash);
+        .execute()
+        .await?;
 
-    Ok(())
+    Ok(metrics)
 }
 
-async fn verify_transactions(user: &mut GooseUser) -> TransactionResult {
+#[derive(Default, Debug)]
+pub struct TransactionBlocks {
+    pub first: AtomicU64,
+    pub last: AtomicU64,
+}
+
+pub async fn verify_transactions(
+    user: &mut GooseUser,
+    blocks: Arc<TransactionBlocks>,
+) -> TransactionResult {
     let transactions = mem::take(
         &mut user
-            .get_session_data_mut::<GooseUserState>()
+            .get_session_data_mut::<GooseWriteUserState>()
             .expect("Should be in a goose user with GooseUserState session data")
             .prev_tx,
     );
 
-    for tx in transactions {
-        let (receipt, mut metrics) =
-            send_request(user, JsonRpcMethod::GetTransactionReceipt, tx).await?;
+    for (index, tx) in transactions.iter().enumerate() {
+        let (status, mut metrics) =
+            send_request::<TransactionStatus>(user, JsonRpcMethod::GetTransactionStatus, tx)
+                .await?;
 
-        match receipt {
-            MaybePendingTransactionReceipt::Receipt(receipt) => match receipt.execution_result() {
-                ExecutionResult::Succeeded => {}
-                ExecutionResult::Reverted { reason } => {
-                    let tag = format!("Transaction {tx:#064x} has been rejected/reverted");
+        match status.finality_status() {
+            SequencerTransactionStatus::Rejected => {
+                let tag = format!("Transaction {tx:#064x} has been rejected/reverted");
 
-                    return user.set_failure(&tag, &mut metrics, None, Some(reason));
-                }
-            },
-            MaybePendingTransactionReceipt::PendingReceipt(pending) => {
+                return user.set_failure(&tag, &mut metrics, None, None);
+            }
+            SequencerTransactionStatus::Received => {
                 let tag =
                     format!("Transaction {tx:#064x} is pending when no transactions should be");
-                let body = format!("{pending:?}");
 
-                return user.set_failure(&tag, &mut metrics, None, Some(&body));
+                return user.set_failure(&tag, &mut metrics, None, None);
+            }
+            SequencerTransactionStatus::AcceptedOnL1 | SequencerTransactionStatus::AcceptedOnL2 => {
+                if index == 0 || index == transactions.len() - 1 {
+                    let (receipt, mut metrics) = send_request::<MaybePendingTransactionReceipt>(
+                        user,
+                        JsonRpcMethod::GetTransactionReceipt,
+                        tx,
+                    )
+                    .await?;
+                    let block_number = match receipt {
+                        MaybePendingTransactionReceipt::Receipt(TransactionReceipt::Invoke(
+                            receipt,
+                        )) => receipt.block_number,
+                        _ => {
+                            return user.set_failure(
+                                "Receipt is not of type InvokeTransactionReceipt or is Pending",
+                                &mut metrics,
+                                None,
+                                None,
+                            );
+                        }
+                    };
+
+                    if index == 0 {
+                        blocks.first.store(block_number, Ordering::Relaxed);
+                    }
+
+                    if index == transactions.len() - 1 {
+                        blocks.last.store(block_number, Ordering::Relaxed);
+                    }
+                }
             }
         }
     }
@@ -373,9 +237,10 @@ async fn verify_transactions(user: &mut GooseUser) -> TransactionResult {
     Ok(())
 }
 
-const WAIT_FOR_TX_TIMEOUT: Duration = Duration::from_secs(60);
+const WAIT_FOR_TX_TIMEOUT: Duration = Duration::from_secs(600);
 
-pub async fn wait_for_tx(
+/// This function is different then `crate::utils::wait_for_tx` due to it using the goose requester
+pub async fn wait_for_tx_with_goose(
     user: &mut GooseUser,
     tx_hash: FieldElement,
 ) -> Result<(), Box<TransactionError>> {
@@ -403,7 +268,12 @@ pub async fn wait_for_tx(
                     return Ok(());
                 }
                 ExecutionResult::Reverted { reason } => {
-                    return user.set_failure(&reverted_tag(), &mut metric, None, Some(reason));
+                    return user.set_failure(
+                        &(reverted_tag() + reason),
+                        &mut metric,
+                        None,
+                        Some(reason),
+                    );
                 }
             },
             JsonRpcResponse::Success {
@@ -411,7 +281,12 @@ pub async fn wait_for_tx(
                 ..
             } => {
                 if let ExecutionResult::Reverted { reason } = pending.execution_result() {
-                    return user.set_failure(&reverted_tag(), &mut metric, None, Some(reason));
+                    return user.set_failure(
+                        &(reverted_tag() + reason),
+                        &mut metric,
+                        None,
+                        Some(reason),
+                    );
                 }
                 log::debug!("Waiting for transaction {tx_hash:#064x} to be accepted");
                 tokio::time::sleep(CHECK_INTERVAL).await;
@@ -428,7 +303,7 @@ pub async fn wait_for_tx(
                 tokio::time::sleep(CHECK_INTERVAL).await;
             }
             JsonRpcResponse::Error {
-                error: JsonRpcError { code, message },
+                error: JsonRpcError { code, message, .. },
                 ..
             } => {
                 let tag = format!("Error Code {code} while waiting for tx {tx_hash:#064x}");
@@ -466,17 +341,17 @@ pub async fn send_execution<T: DeserializeOwned>(
     // see https://github.com/xJonathanLEI/starknet-rs/issues/538
     let raw_exec = unsafe { mem::transmute::<FakeRawExecution, RawExecution>(raw_exec) };
 
-    let param = starknet::core::types::BroadcastedInvokeTransaction {
+    let param = BroadcastedInvokeTransaction::V1(BroadcastedInvokeTransactionV1 {
         sender_address: from_account.address(),
         calldata,
         max_fee: MAX_FEE,
         signature: from_account
-            .sign_execution(&raw_exec)
+            .sign_execution(&raw_exec, false)
             .await
             .expect("Raw Execution should be correctly constructed for signature"),
         nonce,
         is_query: false,
-    };
+    });
 
     send_request(user, method, param).await
 }
