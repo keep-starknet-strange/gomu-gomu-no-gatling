@@ -12,7 +12,7 @@ use crossbeam_queue::ArrayQueue;
 use goose::{config::GooseConfiguration, metrics::GooseRequestMetric, prelude::*};
 use rand::prelude::SliceRandom;
 use serde::{de::DeserializeOwned, Serialize};
-use starknet::core::types::TransactionReceipt;
+use starknet::core::types::{SequencerTransactionStatus, TransactionReceipt, TransactionStatus};
 use starknet::{
     accounts::{
         Account, Call, ConnectedAccount, ExecutionEncoder, RawExecution, SingleOwnerAccount,
@@ -166,7 +166,7 @@ pub async fn read_method(
     Ok(metrics)
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct TransactionBlocks {
     pub first: AtomicU64,
     pub last: AtomicU64,
@@ -183,41 +183,53 @@ pub async fn verify_transactions(
             .prev_tx,
     );
 
-    for tx in transactions {
-        let (receipt, mut metrics) =
-            send_request(user, JsonRpcMethod::GetTransactionReceipt, tx).await?;
+    for (index, tx) in transactions.iter().enumerate() {
+        let (status, mut metrics) =
+            send_request::<TransactionStatus>(user, JsonRpcMethod::GetTransactionStatus, tx)
+                .await?;
 
-        match receipt {
-            MaybePendingTransactionReceipt::Receipt(TransactionReceipt::Invoke(receipt)) => {
-                match receipt.execution_result {
-                    ExecutionResult::Succeeded => {
-                        blocks
-                            .first
-                            .fetch_min(receipt.block_number, Ordering::Relaxed);
-                        blocks
-                            .last
-                            .fetch_max(receipt.block_number, Ordering::Relaxed);
-                    }
-                    ExecutionResult::Reverted { .. } => {
-                        let tag = format!("Transaction {tx:#064x} has been rejected/reverted");
+        match status.finality_status() {
+            SequencerTransactionStatus::Rejected => {
+                let tag = format!("Transaction {tx:#064x} has been rejected/reverted");
 
-                        return user.set_failure(&tag, &mut metrics, None, None);
-                    }
-                }
+                return user.set_failure(&tag, &mut metrics, None, None);
             }
-            MaybePendingTransactionReceipt::Receipt(_) => {
-                return user.set_failure(
-                    "Receipt is not of type InvokeTransactionReceipt",
-                    &mut metrics,
-                    None,
-                    None,
-                );
-            }
-            MaybePendingTransactionReceipt::PendingReceipt(_) => {
+            SequencerTransactionStatus::Received => {
                 let tag =
                     format!("Transaction {tx:#064x} is pending when no transactions should be");
 
                 return user.set_failure(&tag, &mut metrics, None, None);
+            }
+            SequencerTransactionStatus::AcceptedOnL1 | SequencerTransactionStatus::AcceptedOnL2 => {
+                if index == 0 || index == transactions.len() - 1 {
+                    let (receipt, mut metrics) = send_request::<MaybePendingTransactionReceipt>(
+                        user,
+                        JsonRpcMethod::GetTransactionReceipt,
+                        tx,
+                    )
+                    .await?;
+                    let block_number = match receipt {
+                        MaybePendingTransactionReceipt::Receipt(TransactionReceipt::Invoke(
+                            receipt,
+                        )) => receipt.block_number,
+                        _ => {
+                            return user.set_failure(
+                                "Receipt is not of type InvokeTransactionReceipt or is Pending",
+                                &mut metrics,
+                                None,
+                                None,
+                            );
+                        }
+                    };
+
+                    if index == 0 {
+                        blocks.first.store(block_number, Ordering::Relaxed);
+                    }
+
+                    if index == transactions.len() - 1 {
+                        blocks.last.store(block_number, Ordering::Relaxed);
+                    }
+                }
             }
         }
     }
