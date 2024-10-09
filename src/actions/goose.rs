@@ -12,14 +12,16 @@ use crossbeam_queue::ArrayQueue;
 use goose::{config::GooseConfiguration, metrics::GooseRequestMetric, prelude::*};
 use rand::prelude::SliceRandom;
 use serde::{de::DeserializeOwned, Serialize};
-use starknet::core::types::{SequencerTransactionStatus, TransactionReceipt, TransactionStatus};
 use starknet::{
-    accounts::{
-        Account, Call, ConnectedAccount, ExecutionEncoder, RawExecution, SingleOwnerAccount,
-    },
+    accounts::RawExecutionV1,
     core::types::{
-        BroadcastedInvokeTransaction, BroadcastedInvokeTransactionV1, ExecutionResult,
-        FieldElement, MaybePendingTransactionReceipt,
+        Call, SequencerTransactionStatus, TransactionReceiptWithBlockInfo, TransactionStatus,
+    },
+};
+use starknet::{
+    accounts::{Account, ConnectedAccount, ExecutionEncoder, SingleOwnerAccount},
+    core::types::{
+        BroadcastedInvokeTransaction, BroadcastedInvokeTransactionV1, ExecutionResult, Felt,
     },
     providers::{
         jsonrpc::{HttpTransport, JsonRpcError, JsonRpcMethod, JsonRpcResponse},
@@ -52,7 +54,7 @@ pub fn make_goose_config(
 
     // If these are not equal that means user_iterations was truncated
     if total_transactions != amount {
-        log::warn!("Number of {name} is not evenly divisble by concurrency, doing {total_transactions} calls instead");
+        tracing::warn!("Number of {name} is not evenly divisble by concurrency, doing {total_transactions} calls instead");
     }
 
     Ok({
@@ -67,8 +69,8 @@ pub fn make_goose_config(
 #[derive(Debug, Clone)]
 pub struct GooseWriteUserState {
     pub account: StarknetAccount,
-    pub nonce: FieldElement,
-    pub prev_tx: Vec<FieldElement>,
+    pub nonce: Felt,
+    pub prev_tx: Vec<Felt>,
 }
 
 impl GooseWriteUserState {
@@ -202,17 +204,15 @@ pub async fn verify_transactions(
             }
             SequencerTransactionStatus::AcceptedOnL1 | SequencerTransactionStatus::AcceptedOnL2 => {
                 if index == 0 || index == transactions.len() - 1 {
-                    let (receipt, mut metrics) = send_request::<MaybePendingTransactionReceipt>(
+                    let (tx, mut metrics) = send_request::<TransactionReceiptWithBlockInfo>(
                         user,
                         JsonRpcMethod::GetTransactionReceipt,
                         tx,
                     )
                     .await?;
-                    let block_number = match receipt {
-                        MaybePendingTransactionReceipt::Receipt(TransactionReceipt::Invoke(
-                            receipt,
-                        )) => receipt.block_number,
-                        _ => {
+                    let block_number = match tx.block.block_number() {
+                        Some(block_number) => block_number,
+                        None => {
                             return user.set_failure(
                                 "Receipt is not of type InvokeTransactionReceipt or is Pending",
                                 &mut metrics,
@@ -242,7 +242,7 @@ const WAIT_FOR_TX_TIMEOUT: Duration = Duration::from_secs(600);
 /// This function is different then `crate::utils::wait_for_tx` due to it using the goose requester
 pub async fn wait_for_tx_with_goose(
     user: &mut GooseUser,
-    tx_hash: FieldElement,
+    tx_hash: Felt,
 ) -> Result<(), Box<TransactionError>> {
     let start = SystemTime::now();
 
@@ -261,7 +261,7 @@ pub async fn wait_for_tx_with_goose(
 
         match receipt {
             JsonRpcResponse::Success {
-                result: MaybePendingTransactionReceipt::Receipt(receipt),
+                result: TransactionReceiptWithBlockInfo { receipt, block: _ },
                 ..
             } => match receipt.execution_result() {
                 ExecutionResult::Succeeded => {
@@ -276,21 +276,6 @@ pub async fn wait_for_tx_with_goose(
                     );
                 }
             },
-            JsonRpcResponse::Success {
-                result: MaybePendingTransactionReceipt::PendingReceipt(pending),
-                ..
-            } => {
-                if let ExecutionResult::Reverted { reason } = pending.execution_result() {
-                    return user.set_failure(
-                        &(reverted_tag() + reason),
-                        &mut metric,
-                        None,
-                        Some(reason),
-                    );
-                }
-                log::debug!("Waiting for transaction {tx_hash:#064x} to be accepted");
-                tokio::time::sleep(CHECK_INTERVAL).await;
-            }
             JsonRpcResponse::Error {
                 error:
                     JsonRpcError {
@@ -299,7 +284,7 @@ pub async fn wait_for_tx_with_goose(
                     },
                 ..
             } => {
-                log::debug!("Waiting for transaction {tx_hash:#064x} to show up");
+                tracing::debug!("Waiting for transaction {tx_hash:#064x} to show up");
                 tokio::time::sleep(CHECK_INTERVAL).await;
             }
             JsonRpcResponse::Error {
@@ -307,7 +292,6 @@ pub async fn wait_for_tx_with_goose(
                 ..
             } => {
                 let tag = format!("Error Code {code} while waiting for tx {tx_hash:#064x}");
-
                 return user.set_failure(&tag, &mut metric, None, Some(&message));
             }
         }
@@ -318,7 +302,7 @@ pub async fn wait_for_tx_with_goose(
 pub async fn send_execution<T: DeserializeOwned>(
     user: &mut GooseUser,
     calls: Vec<Call>,
-    nonce: FieldElement,
+    nonce: Felt,
     from_account: &SingleOwnerAccount<Arc<JsonRpcClient<HttpTransport>>, LocalWallet>,
     method: JsonRpcMethod,
 ) -> Result<(T, GooseRequestMetric), Box<TransactionError>> {
@@ -327,8 +311,8 @@ pub async fn send_execution<T: DeserializeOwned>(
     #[allow(dead_code)] // Removes warning for unused fields, we need them to properly transmute
     struct FakeRawExecution {
         calls: Vec<Call>,
-        nonce: FieldElement,
-        max_fee: FieldElement,
+        nonce: Felt,
+        max_fee: Felt,
     }
 
     let raw_exec = FakeRawExecution {
@@ -339,14 +323,14 @@ pub async fn send_execution<T: DeserializeOwned>(
 
     // TODO: We cannot right now construct RawExecution directly and need to use this hack
     // see https://github.com/xJonathanLEI/starknet-rs/issues/538
-    let raw_exec = unsafe { mem::transmute::<FakeRawExecution, RawExecution>(raw_exec) };
+    let raw_exec = unsafe { mem::transmute::<FakeRawExecution, RawExecutionV1>(raw_exec) };
 
     let param = BroadcastedInvokeTransaction::V1(BroadcastedInvokeTransactionV1 {
         sender_address: from_account.address(),
         calldata,
         max_fee: MAX_FEE,
         signature: from_account
-            .sign_execution(&raw_exec, false)
+            .sign_execution_v1(&raw_exec, false)
             .await
             .expect("Raw Execution should be correctly constructed for signature"),
         nonce,

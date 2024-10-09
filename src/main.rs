@@ -1,5 +1,3 @@
-#[macro_use]
-extern crate log;
 use clap::Parser;
 use color_eyre::eyre::Result;
 use dotenvy::dotenv;
@@ -9,10 +7,21 @@ use gatling::{
     config::GatlingConfig,
 };
 
+pub fn setup_tracing() {
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .compact()
+        .with_file(false)
+        .with_line_number(true)
+        .with_thread_ids(false)
+        .with_target(false)
+        .init();
+}
+
 #[tokio::main(flavor = "multi_thread", worker_threads = 10)]
 async fn main() -> Result<()> {
     // Initialize the logger.
-    env_logger::init();
+    setup_tracing();
 
     // Initialize the error handler.
     color_eyre::install()?;
@@ -20,7 +29,7 @@ async fn main() -> Result<()> {
     // Load the environment variables from the .env file.
     dotenv().ok();
 
-    info!("Starting Gatling...");
+    tracing::info!("🔫 Starting Gatling...");
 
     // Parse the command line arguments.
     let cli = Cli::parse();

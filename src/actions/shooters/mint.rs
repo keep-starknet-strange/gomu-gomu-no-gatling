@@ -1,11 +1,13 @@
 use std::{collections::HashMap, sync::Arc};
 
 use color_eyre::eyre::bail;
-use log::{debug, info, warn};
 use starknet::{
-    accounts::{Account, Call, ConnectedAccount},
+    accounts::{Account, ConnectedAccount},
     contract::ContractFactory,
-    core::types::{BlockId, BlockTag, FieldElement},
+    core::{
+        types::{BlockId, BlockTag, Call, Felt},
+        utils::get_contract_address,
+    },
     macros::{felt, selector},
     providers::{jsonrpc::HttpTransport, JsonRpcClient, Provider},
 };
@@ -14,13 +16,14 @@ use tokio::task::JoinSet;
 use crate::{
     actions::setup::{GatlingSetup, StarknetAccount, CHECK_INTERVAL, MAX_FEE},
     generators::get_rng,
-    utils::{compute_contract_address, wait_for_tx},
+    utils::wait_for_tx,
 };
 
 use super::Shooter;
 
 pub struct MintShooter {
-    pub account_to_erc721_addresses: HashMap<FieldElement, FieldElement>,
+    pub account_to_erc721_addresses: HashMap<Felt, Felt>,
+    #[allow(unused)]
     pub recipient: StarknetAccount,
 }
 
@@ -76,10 +79,10 @@ impl Shooter for MintShooter {
 impl MintShooter {
     async fn deploy_erc721(
         starknet_rpc: Arc<JsonRpcClient<HttpTransport>>,
-        deployer_salt: FieldElement,
-        class_hash: FieldElement,
+        deployer_salt: Felt,
+        class_hash: Felt,
         recipient: StarknetAccount,
-    ) -> color_eyre::Result<FieldElement> {
+    ) -> color_eyre::Result<Felt> {
         let contract_factory = ContractFactory::new(class_hash, &recipient);
 
         let name = selector!("TestNFT");
@@ -88,35 +91,40 @@ impl MintShooter {
         let constructor_args = vec![name, symbol, recipient.address()];
         let unique = false;
 
-        let address = compute_contract_address(deployer_salt, class_hash, &constructor_args);
+        let address = get_contract_address(
+            deployer_salt,
+            class_hash,
+            &constructor_args,
+            recipient.address(),
+        );
 
         if let Ok(contract_class_hash) = starknet_rpc
             .get_class_hash_at(BlockId::Tag(BlockTag::Pending), address)
             .await
         {
             if contract_class_hash == class_hash {
-                warn!("ERC721 contract already deployed at address {address:#064x}");
+                tracing::warn!("ERC721 contract already deployed at address {address:#064x}");
                 return Ok(address);
             } else {
                 bail!("ERC721 contract {address:#064x} already deployed with a different class hash {contract_class_hash:#064x}, expected {class_hash:#064x}");
             }
         }
 
-        let deploy = contract_factory.deploy(constructor_args, deployer_salt, unique);
+        let deploy = contract_factory.deploy_v1(constructor_args, deployer_salt, unique);
 
         let nonce = recipient.get_nonce().await?;
 
-        info!("Deploying ERC721 with nonce={}, address={address}", nonce);
+        tracing::info!("Deploying ERC721 with nonce={}, address={address}", nonce);
 
         let result = deploy.nonce(nonce).max_fee(MAX_FEE).send().await?;
         wait_for_tx(&starknet_rpc, result.transaction_hash, CHECK_INTERVAL).await?;
 
-        debug!(
+        tracing::info!(
             "Deploy ERC721 transaction accepted {:#064x}",
             result.transaction_hash
         );
 
-        info!("ERC721 contract deployed at address {:#064x}", address);
+        tracing::info!("ERC721 contract deployed at address {:#064x}", address);
         Ok(address)
     }
 }

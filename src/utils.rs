@@ -5,14 +5,12 @@ use std::time::SystemTime;
 use color_eyre::eyre::{bail, OptionExt};
 use color_eyre::{eyre::eyre, Result};
 use lazy_static::lazy_static;
-use log::debug;
 
-use starknet::core::types::MaybePendingTransactionReceipt::{PendingReceipt, Receipt};
+use starknet::core::types::Felt;
 use starknet::core::types::{
-    BlockId, BlockWithTxs, ExecutionResources, ExecutionResult, MaybePendingBlockWithTxs,
-    StarknetError,
+    BlockId, BlockWithTxs, ComputationResources, DataAvailabilityResources, DataResources,
+    ExecutionResources, ExecutionResult, MaybePendingBlockWithTxs, StarknetError,
 };
-use starknet::core::{crypto::compute_hash_on_elements, types::FieldElement};
 use starknet::providers::ProviderError;
 use starknet::providers::{jsonrpc::HttpTransport, JsonRpcClient, Provider};
 use tokio::task::JoinSet;
@@ -22,37 +20,6 @@ use sysinfo::System;
 
 lazy_static! {
     pub static ref SYSINFO: SysInfo = SysInfo::new();
-}
-
-/// Cairo string for "STARKNET_CONTRACT_ADDRESS"
-const PREFIX_CONTRACT_ADDRESS: FieldElement = FieldElement::from_mont([
-    3829237882463328880,
-    17289941567720117366,
-    8635008616843941496,
-    533439743893157637,
-]);
-
-/// 2 ** 251 - 256
-const ADDR_BOUND: FieldElement = FieldElement::from_mont([
-    18446743986131443745,
-    160989183,
-    18446744073709255680,
-    576459263475590224,
-]);
-
-// Copied from starknet-rs since it's not public
-pub fn compute_contract_address(
-    salt: FieldElement,
-    class_hash: FieldElement,
-    constructor_calldata: &[FieldElement],
-) -> FieldElement {
-    compute_hash_on_elements(&[
-        PREFIX_CONTRACT_ADDRESS,
-        FieldElement::ZERO,
-        salt,
-        class_hash,
-        compute_hash_on_elements(constructor_calldata),
-    ]) % ADDR_BOUND
 }
 
 #[derive(Debug, Clone)]
@@ -112,7 +79,7 @@ const WAIT_FOR_TX_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub async fn wait_for_tx(
     provider: &JsonRpcClient<HttpTransport>,
-    tx_hash: FieldElement,
+    tx_hash: Felt,
     check_interval: Duration,
 ) -> Result<()> {
     let start = SystemTime::now();
@@ -125,7 +92,7 @@ pub async fn wait_for_tx(
         }
 
         match provider.get_transaction_receipt(tx_hash).await {
-            Ok(Receipt(receipt)) => match receipt.execution_result() {
+            Ok(tx) => match tx.receipt.execution_result() {
                 ExecutionResult::Succeeded => {
                     return Ok(());
                 }
@@ -135,17 +102,8 @@ pub async fn wait_for_tx(
                     )));
                 }
             },
-            Ok(PendingReceipt(pending)) => {
-                if let ExecutionResult::Reverted { reason } = pending.execution_result() {
-                    return Err(eyre!(format!(
-                        "Transaction {tx_hash:#064x} has been rejected/reverted: {reason}"
-                    )));
-                }
-                debug!("Waiting for transaction {tx_hash:#064x} to be accepted");
-                tokio::time::sleep(check_interval).await;
-            }
             Err(ProviderError::StarknetError(StarknetError::TransactionHashNotFound)) => {
-                debug!("Waiting for transaction {tx_hash:#064x} to show up");
+                tracing::debug!("Waiting for transaction {tx_hash:#064x} to show up");
                 tokio::time::sleep(check_interval).await;
             }
             Err(err) => {
@@ -230,16 +188,24 @@ pub async fn get_blocks_with_txs(
         #[cfg(not(with_sps))]
         for _ in block_with_txs.transactions.iter() {
             resources.push(ExecutionResources {
-                steps: 0,
-                memory_holes: None,
-                range_check_builtin_applications: None,
-                pedersen_builtin_applications: None,
-                poseidon_builtin_applications: None,
-                ec_op_builtin_applications: None,
-                ecdsa_builtin_applications: None,
-                bitwise_builtin_applications: None,
-                keccak_builtin_applications: None,
-                segment_arena_builtin: None,
+                computation_resources: ComputationResources {
+                    steps: 0,
+                    memory_holes: None,
+                    range_check_builtin_applications: None,
+                    pedersen_builtin_applications: None,
+                    poseidon_builtin_applications: None,
+                    ec_op_builtin_applications: None,
+                    ecdsa_builtin_applications: None,
+                    bitwise_builtin_applications: None,
+                    keccak_builtin_applications: None,
+                    segment_arena_builtin: None,
+                },
+                data_resources: DataResources {
+                    data_availability: DataAvailabilityResources {
+                        l1_data_gas: 0,
+                        l1_gas: 0,
+                    },
+                },
             });
         }
 

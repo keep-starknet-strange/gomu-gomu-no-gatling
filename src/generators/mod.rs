@@ -1,14 +1,14 @@
 use rand::Rng;
 
 use starknet::{
-    core::types::FieldElement,
+    core::types::Felt,
     signers::{LocalWallet, SigningKey},
 };
 
 /// generate random number for testing
-pub fn get_rng() -> FieldElement {
+pub fn get_rng() -> Felt {
     let mut rng = rand::thread_rng();
-    FieldElement::from(rng.gen::<u64>())
+    Felt::from(rng.gen::<u64>())
 }
 
 pub fn generate_stark_keys() -> LocalWallet {

@@ -7,18 +7,18 @@ use color_eyre::{
     Result,
 };
 
-use log::{debug, info, warn};
 use starknet::core::types::contract::SierraClass;
+use starknet::core::types::Call;
 use tokio::task::JoinSet;
 
 use std::path::Path;
 
 use starknet::accounts::{
-    Account, AccountFactory, Call, ConnectedAccount, ExecutionEncoding, OpenZeppelinAccountFactory,
+    Account, AccountFactory, ConnectedAccount, ExecutionEncoding, OpenZeppelinAccountFactory,
     SingleOwnerAccount,
 };
 use starknet::core::types::{
-    contract::legacy::LegacyContractClass, BlockId, BlockTag, FieldElement, StarknetError,
+    contract::legacy::LegacyContractClass, BlockId, BlockTag, Felt, StarknetError,
 };
 use starknet::macros::{felt, selector};
 use starknet::providers::ProviderError;
@@ -30,7 +30,7 @@ use std::time::Duration;
 use url::Url;
 
 // Used to bypass validation
-pub static MAX_FEE: FieldElement = felt!("0x6efb28c75a0000");
+pub static MAX_FEE: Felt = felt!("0x6efb28c75a0000");
 pub static CHECK_INTERVAL: Duration = Duration::from_millis(500);
 
 pub type StarknetAccount = SingleOwnerAccount<Arc<JsonRpcClient<HttpTransport>>, LocalWallet>;
@@ -113,12 +113,12 @@ impl GatlingSetup {
 
     pub async fn transfer(
         &self,
-        contract_address: FieldElement,
+        contract_address: Felt,
         account: StarknetAccount,
-        recipient: FieldElement,
-        amount: FieldElement,
-        nonce: FieldElement,
-    ) -> Result<FieldElement> {
+        recipient: Felt,
+        amount: Felt,
+        nonce: Felt,
+    ) -> Result<Felt> {
         transfer(account, nonce, amount, contract_address, recipient).await
     }
 
@@ -136,11 +136,11 @@ impl GatlingSetup {
     /// A vector of the created accounts.
     async fn create_accounts<'a>(
         &mut self,
-        class_hash: FieldElement,
+        class_hash: Felt,
         num_accounts: usize,
         execution_encoding: ExecutionEncoding,
     ) -> Result<Vec<StarknetAccount>> {
-        info!("Creating {} accounts", num_accounts);
+        tracing::info!("Creating {} accounts", num_accounts);
 
         let mut deployed_accounts: Vec<StarknetAccount> = Vec::with_capacity(num_accounts);
 
@@ -150,8 +150,6 @@ impl GatlingSetup {
 
         for i in 0..num_accounts {
             self.account.set_block_id(BlockId::Tag(BlockTag::Pending));
-
-            let fee_token_address = self.config.setup.fee_token_address;
 
             // TODO: Check if OpenZepplinAccountFactory could be used with other type of accounts ? or should we require users to use OpenZepplinAccountFactory ?
             let signer = self.signer.clone();
@@ -164,11 +162,11 @@ impl GatlingSetup {
             )
             .await?;
 
-            let salt = self.config.deployer.salt + FieldElement::from(i);
+            let salt = self.config.deployer.salt + Felt::from(i);
 
-            let deploy = account_factory.deploy(salt).max_fee(MAX_FEE);
+            let deploy = account_factory.deploy_v1(salt).max_fee(MAX_FEE);
             let address = deploy.address();
-            info!("Deploying account {i} with salt {salt} at address {address:#064x}");
+            tracing::info!("Deploying account {i} with salt {salt} at address {address:#064x}");
 
             if let Ok(account_class_hash) = self
                 .starknet_rpc
@@ -176,7 +174,7 @@ impl GatlingSetup {
                 .await
             {
                 if account_class_hash == class_hash {
-                    warn!("Account {i} already deployed at address {address:#064x}");
+                    tracing::warn!("Account {i} already deployed at address {address:#064x}");
                     let account = SingleOwnerAccount::new(
                         self.starknet_rpc.clone(),
                         signer.clone(),
@@ -191,16 +189,17 @@ impl GatlingSetup {
                 }
             }
 
+            let fee_token_address = self.config.setup.fee_token_address;
             let tx_hash = self
                 .transfer(
                     fee_token_address,
                     self.account.clone(),
                     address,
-                    felt!("0xFFFFFFFFFFFFFFFFFFFF"),
+                    felt!("0xFFFFFFFFFFFFFFF"),
                     nonce,
                 )
                 .await?;
-            nonce += FieldElement::ONE;
+            nonce += Felt::ONE;
             wait_for_tx(&self.starknet_rpc, tx_hash, CHECK_INTERVAL).await?;
 
             let result = deploy.send().await?;
@@ -221,7 +220,7 @@ impl GatlingSetup {
                 wait_for_tx(&starknet_rpc, result.transaction_hash, CHECK_INTERVAL).await
             });
 
-            info!("Account {i} deployed at address {address:#064x}");
+            tracing::info!("Account {i} deployed at address {address:#064x}");
         }
 
         while let Some(result) = deployment_joinset.join_next().await {
@@ -231,14 +230,14 @@ impl GatlingSetup {
         Ok(deployed_accounts)
     }
 
-    async fn check_already_declared(&self, class_hash: FieldElement) -> Result<bool> {
+    async fn check_already_declared(&self, class_hash: Felt) -> Result<bool> {
         match self
             .starknet_rpc
             .get_class(BlockId::Tag(BlockTag::Pending), class_hash)
             .await
         {
             Ok(_) => {
-                warn!("Contract already declared at {class_hash:#064x}");
+                tracing::warn!("Contract already declared at {class_hash:#064x}");
                 Ok(true)
             }
             Err(ProviderError::StarknetError(StarknetError::ClassHashNotFound)) => Ok(false),
@@ -249,8 +248,8 @@ impl GatlingSetup {
     async fn declare_contract_legacy<'a>(
         &mut self,
         contract_path: impl AsRef<Path>,
-    ) -> Result<FieldElement> {
-        info!(
+    ) -> Result<Felt> {
+        tracing::info!(
             "Declaring contract from path {}",
             contract_path.as_ref().display()
         );
@@ -276,7 +275,7 @@ impl GatlingSetup {
 
         wait_for_tx(&self.starknet_rpc, tx_resp.transaction_hash, CHECK_INTERVAL).await?;
 
-        info!(
+        tracing::info!(
             "Contract declared successfully at {:#064x}",
             tx_resp.class_hash
         );
@@ -287,14 +286,14 @@ impl GatlingSetup {
     async fn declare_contract_v1<'a>(
         &mut self,
         contract_path: impl AsRef<Path>,
-        casm_class_hash: FieldElement,
-    ) -> Result<FieldElement> {
+        casm_class_hash: Felt,
+    ) -> Result<Felt> {
         let file = std::fs::File::open(contract_path.as_ref())?;
         let contract_artifact: SierraClass = serde_json::from_reader(file)?;
         let class_hash = contract_artifact.class_hash()?;
 
         // Sierra class artifact. Output of the `starknet-compile` command
-        info!(
+        tracing::info!(
             "Declaring contract v1 from path {} with class hash {:#064x}",
             contract_path.as_ref().display(),
             class_hash
@@ -314,7 +313,7 @@ impl GatlingSetup {
 
         let tx_resp = self
             .account
-            .declare(Arc::new(flattened_class), casm_class_hash)
+            .declare_v2(Arc::new(flattened_class), casm_class_hash)
             .max_fee(MAX_FEE)
             .nonce(nonce)
             .send()
@@ -323,7 +322,7 @@ impl GatlingSetup {
 
         wait_for_tx(&self.starknet_rpc, tx_resp.transaction_hash, CHECK_INTERVAL).await?;
 
-        info!(
+        tracing::info!(
             "Contract declared successfully at {:#064x}",
             tx_resp.class_hash
         );
@@ -334,7 +333,7 @@ impl GatlingSetup {
     pub async fn declare_contract(
         &mut self,
         contract_source: &crate::config::ContractSourceConfig,
-    ) -> Result<FieldElement> {
+    ) -> Result<Felt> {
         match contract_source {
             ContractSourceConfig::V0(path) => self.declare_contract_legacy(&path).await,
             ContractSourceConfig::V1(config) => {
@@ -347,15 +346,15 @@ impl GatlingSetup {
 
 pub async fn transfer(
     account: StarknetAccount,
-    nonce: FieldElement,
-    amount: FieldElement,
-    contract_address: FieldElement,
-    recipient: FieldElement,
-) -> color_eyre::Result<FieldElement> {
+    nonce: Felt,
+    amount: Felt,
+    contract_address: Felt,
+    recipient: Felt,
+) -> color_eyre::Result<Felt> {
     let from_address = account.address();
 
-    debug!(
-        "Transferring {amount} of {contract_address:#064x} from address {from_address:#064x} to address {recipient:#064x} with nonce={}",
+    tracing::info!(
+        "Transfering {amount} of {contract_address:#064x} from address {from_address:#064x} to address {recipient:#064x} with nonce={}",
         nonce,
     );
 
@@ -368,7 +367,7 @@ pub async fn transfer(
     };
 
     let result = account
-        .execute(vec![call])
+        .execute_v1(vec![call])
         .max_fee(MAX_FEE)
         .nonce(nonce)
         .send()

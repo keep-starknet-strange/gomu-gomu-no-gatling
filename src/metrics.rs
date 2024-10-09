@@ -306,7 +306,7 @@ pub fn compute_node_metrics(
         let total_steps: u64 = blocks_with_txs
             .iter()
             .flat_map(|(_, r)| r)
-            .map(|resource| resource.steps)
+            .map(|resource| resource.computation_resources.steps)
             .sum();
 
         metrics.push(MetricResult {
