@@ -6,7 +6,7 @@ use starknet::{
     contract::ContractFactory,
     core::{
         types::{BlockId, BlockTag, Call, Felt},
-        utils::get_contract_address,
+        utils::{get_udc_deployed_address, UdcUniqueness},
     },
     macros::{felt, selector},
     providers::{jsonrpc::HttpTransport, JsonRpcClient, Provider},
@@ -89,13 +89,14 @@ impl MintShooter {
         let symbol = selector!("TNFT");
 
         let constructor_args = vec![name, symbol, recipient.address()];
-        let unique = false;
 
-        let address = get_contract_address(
+        let udc_uniqueness = UdcUniqueness::NotUnique;
+        let unique = matches!(udc_uniqueness, UdcUniqueness::Unique(_));
+        let address = get_udc_deployed_address(
             deployer_salt,
             class_hash,
+            &UdcUniqueness::NotUnique,
             &constructor_args,
-            recipient.address(),
         );
 
         if let Ok(contract_class_hash) = starknet_rpc

@@ -4,7 +4,7 @@ use starknet::{
     contract::ContractFactory,
     core::{
         types::{BlockId, BlockTag, Call, Felt},
-        utils::get_contract_address,
+        utils::{get_udc_deployed_address, UdcUniqueness},
     },
     macros::{felt, selector},
     providers::Provider,
@@ -53,14 +53,15 @@ impl Shooter for TransferShooter {
             initial_supply_high,
             recipient,
         ];
-        let unique = false;
 
         let deployer = setup.config().deployer.clone();
-        let address = get_contract_address(
+        let udc_uniqueness = UdcUniqueness::NotUnique;
+        let unique = matches!(udc_uniqueness, UdcUniqueness::Unique(_));
+        let address = get_udc_deployed_address(
             deployer.salt,
             class_hash,
+            &UdcUniqueness::NotUnique,
             &constructor_args,
-            deployer.address,
         );
 
         if let Ok(contract_class_hash) = setup

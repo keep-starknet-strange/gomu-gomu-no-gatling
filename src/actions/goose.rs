@@ -78,6 +78,7 @@ impl GooseWriteUserState {
         account: StarknetAccount,
         transactions_amount: usize,
     ) -> Result<Self, ProviderError> {
+        tracing::info!("🗣 {}", account.address());
         Ok(Self {
             nonce: account.get_nonce().await?,
             account,
