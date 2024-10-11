@@ -50,7 +50,7 @@ impl GatlingSetup {
 
         let signer = LocalWallet::from(SigningKey::from_secret_scalar(config.deployer.signing_key));
 
-        let mut account = SingleOwnerAccount::new(
+        let account = SingleOwnerAccount::new(
             starknet_rpc.clone(),
             signer.clone(),
             config.deployer.address,
@@ -61,7 +61,6 @@ impl GatlingSetup {
                 ExecutionEncoding::New
             },
         );
-        account.set_block_id(BlockId::Tag(BlockTag::Pending));
 
         Ok(Self {
             config,
