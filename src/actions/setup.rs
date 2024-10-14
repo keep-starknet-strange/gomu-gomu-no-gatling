@@ -144,14 +144,10 @@ impl GatlingSetup {
         tracing::info!("Creating {} accounts", num_accounts);
 
         let mut deployed_accounts: Vec<StarknetAccount> = Vec::with_capacity(num_accounts);
-
         let mut nonce = self.account.get_nonce().await?;
 
         let mut deployment_joinset = JoinSet::new();
-
         for i in 0..num_accounts {
-            self.account.set_block_id(BlockId::Tag(BlockTag::Pending));
-
             // TODO: Check if OpenZepplinAccountFactory could be used with other type of accounts ? or should we require users to use OpenZepplinAccountFactory ?
             let signer = self.signer.clone();
             let provider = self.starknet_rpc.clone();
