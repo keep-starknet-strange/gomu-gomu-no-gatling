@@ -5,6 +5,6 @@
     "address": null,
     "keys": [],
     "continuation_token": null,
-    "chunk_size": 10
+    "chunk_size": 1
   }
 ]

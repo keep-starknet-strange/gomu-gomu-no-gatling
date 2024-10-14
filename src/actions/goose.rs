@@ -15,8 +15,7 @@ use serde::{de::DeserializeOwned, Serialize};
 use starknet::{
     accounts::RawExecutionV1,
     core::types::{
-        BlockId, BlockTag, Call, SequencerTransactionStatus, TransactionReceiptWithBlockInfo,
-        TransactionStatus,
+        Call, SequencerTransactionStatus, TransactionReceiptWithBlockInfo, TransactionStatus,
     },
 };
 use starknet::{
@@ -76,11 +75,10 @@ pub struct GooseWriteUserState {
 
 impl GooseWriteUserState {
     pub async fn new(
-        mut account: StarknetAccount,
+        account: StarknetAccount,
         transactions_amount: usize,
     ) -> Result<Self, ProviderError> {
         tracing::info!("🗣 {}", account.address());
-        account.set_block_id(BlockId::Tag(BlockTag::Pending));
         Ok(Self {
             nonce: account.get_nonce().await?,
             account,
