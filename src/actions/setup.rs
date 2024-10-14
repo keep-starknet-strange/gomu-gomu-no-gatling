@@ -142,6 +142,7 @@ impl GatlingSetup {
     ) -> Result<Vec<StarknetAccount>> {
         tracing::info!("Creating {} accounts", num_accounts);
 
+        let mut nonce = self.account.get_nonce().await?;
         let mut deployed_accounts: Vec<StarknetAccount> = Vec::with_capacity(num_accounts);
 
         let mut deployment_joinset = JoinSet::new();
@@ -191,10 +192,11 @@ impl GatlingSetup {
                     fee_token_address,
                     self.account.clone(),
                     address,
-                    felt!("0xFFFFF"),
-                    self.account.get_nonce().await?,
+                    felt!("0xFFFFFFFFFFF"),
+                    nonce,
                 )
                 .await?;
+            nonce += Felt::ONE;
             wait_for_tx(&self.starknet_rpc, tx_hash, CHECK_INTERVAL).await?;
 
             let result = deploy.send().await?;
