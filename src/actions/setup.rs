@@ -49,7 +49,6 @@ impl GatlingSetup {
             Arc::new(starknet_rpc_provider(Url::parse(&config.clone().rpc.url)?));
 
         let signer = LocalWallet::from(SigningKey::from_secret_scalar(config.deployer.signing_key));
-
         let mut account = SingleOwnerAccount::new(
             starknet_rpc.clone(),
             signer.clone(),
@@ -61,9 +60,6 @@ impl GatlingSetup {
                 ExecutionEncoding::New
             },
         );
-
-        // `SingleOwnerAccount` defaults to checking nonce and estimating fees against the latest
-        // block. Change the target block to pending with the following line:
         account.set_block_id(BlockId::Tag(BlockTag::Pending));
 
         Ok(Self {
@@ -147,7 +143,6 @@ impl GatlingSetup {
         tracing::info!("Creating {} accounts", num_accounts);
 
         let mut deployed_accounts: Vec<StarknetAccount> = Vec::with_capacity(num_accounts);
-        let mut nonce = self.account.get_nonce().await?;
 
         let mut deployment_joinset = JoinSet::new();
         for i in 0..num_accounts {
@@ -175,13 +170,14 @@ impl GatlingSetup {
             {
                 if account_class_hash == class_hash {
                     tracing::warn!("Account {i} already deployed at address {address:#064x}");
-                    let account = SingleOwnerAccount::new(
+                    let mut account = SingleOwnerAccount::new(
                         self.starknet_rpc.clone(),
                         signer.clone(),
                         address,
                         self.config.setup.chain_id,
                         execution_encoding,
                     );
+                    account.set_block_id(BlockId::Tag(BlockTag::Pending));
                     deployed_accounts.push(account);
                     continue;
                 } else {
@@ -196,10 +192,9 @@ impl GatlingSetup {
                     self.account.clone(),
                     address,
                     felt!("0xFFFFF"),
-                    nonce,
+                    self.account.get_nonce().await?,
                 )
                 .await?;
-            nonce += Felt::ONE;
             wait_for_tx(&self.starknet_rpc, tx_hash, CHECK_INTERVAL).await?;
 
             let result = deploy.send().await?;
@@ -211,8 +206,6 @@ impl GatlingSetup {
                 self.config.setup.chain_id,
                 execution_encoding,
             );
-            // `SingleOwnerAccount` defaults to checking nonce and estimating fees against the latest
-            // block. Change the target block to pending with the following line:
             account.set_block_id(BlockId::Tag(BlockTag::Pending));
 
             deployed_accounts.push(account);
