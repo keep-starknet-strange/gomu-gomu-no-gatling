@@ -39,7 +39,7 @@ pub struct GatlingSetup {
     config: GatlingConfig,
     starknet_rpc: Arc<JsonRpcClient<HttpTransport>>,
     signer: LocalWallet,
-    account: StarknetAccount,
+    deployer: StarknetAccount,
     accounts: Vec<StarknetAccount>,
 }
 
@@ -49,7 +49,7 @@ impl GatlingSetup {
             Arc::new(starknet_rpc_provider(Url::parse(&config.clone().rpc.url)?));
 
         let signer = LocalWallet::from(SigningKey::from_secret_scalar(config.deployer.signing_key));
-        let mut account = SingleOwnerAccount::new(
+        let mut deployer = SingleOwnerAccount::new(
             starknet_rpc.clone(),
             signer.clone(),
             config.deployer.address,
@@ -60,13 +60,13 @@ impl GatlingSetup {
                 ExecutionEncoding::New
             },
         );
-        account.set_block_id(BlockId::Tag(BlockTag::Pending));
+        deployer.set_block_id(BlockId::Tag(BlockTag::Pending));
 
         Ok(Self {
             config,
             starknet_rpc,
             signer,
-            account,
+            deployer,
             accounts: vec![],
         })
     }
@@ -80,7 +80,7 @@ impl GatlingSetup {
     }
 
     pub fn deployer_account(&self) -> &StarknetAccount {
-        &self.account
+        &self.deployer
     }
 
     pub fn accounts(&self) -> &[StarknetAccount] {
@@ -114,12 +114,12 @@ impl GatlingSetup {
     pub async fn transfer(
         &self,
         contract_address: Felt,
-        account: StarknetAccount,
+        deployer: StarknetAccount,
         recipient: Felt,
         amount: Felt,
         nonce: Felt,
     ) -> Result<Felt> {
-        transfer(account, nonce, amount, contract_address, recipient).await
+        transfer(deployer, nonce, amount, contract_address, recipient).await
     }
 
     /// Create accounts.
@@ -129,7 +129,6 @@ impl GatlingSetup {
     /// * `class_hash` - The class hash of the account contract.
     /// * `num_accounts` - The number of accounts to create.
     /// * `execution_encoding` - Execution encoding to use, `Legacy` for Cairo Zero and `New` for Cairo
-    /// * `erc20_address` - The address of the ERC20 contract to use for funding the accounts.
     ///
     /// # Returns
     ///
@@ -142,7 +141,7 @@ impl GatlingSetup {
     ) -> Result<Vec<StarknetAccount>> {
         tracing::info!("Creating {} accounts", num_accounts);
 
-        let mut nonce = self.account.get_nonce().await?;
+        let mut nonce = self.deployer.get_nonce().await?;
         let mut deployed_accounts: Vec<StarknetAccount> = Vec::with_capacity(num_accounts);
 
         let mut deployment_joinset = JoinSet::new();
@@ -171,15 +170,15 @@ impl GatlingSetup {
             {
                 if account_class_hash == class_hash {
                     tracing::warn!("Account {i} already deployed at address {address:#064x}");
-                    let mut account = SingleOwnerAccount::new(
+                    let mut already_deployed_account = SingleOwnerAccount::new(
                         self.starknet_rpc.clone(),
                         signer.clone(),
                         address,
                         self.config.setup.chain_id,
                         execution_encoding,
                     );
-                    account.set_block_id(BlockId::Tag(BlockTag::Pending));
-                    deployed_accounts.push(account);
+                    already_deployed_account.set_block_id(BlockId::Tag(BlockTag::Pending));
+                    deployed_accounts.push(already_deployed_account);
                     continue;
                 } else {
                     bail!("Account {i} already deployed at address {address:#064x} with a different class hash {account_class_hash:#064x}, expected {class_hash:#064x}");
@@ -190,7 +189,7 @@ impl GatlingSetup {
             let tx_hash = self
                 .transfer(
                     fee_token_address,
-                    self.account.clone(),
+                    self.deployer.clone(),
                     address,
                     felt!("0xFFFFFFFFFFFFFFF"),
                     nonce,
@@ -201,18 +200,17 @@ impl GatlingSetup {
 
             let result = deploy.send().await?;
 
-            let mut account = SingleOwnerAccount::new(
+            let mut new_account = SingleOwnerAccount::new(
                 self.starknet_rpc.clone(),
                 signer.clone(),
                 result.contract_address,
                 self.config.setup.chain_id,
                 execution_encoding,
             );
-            account.set_block_id(BlockId::Tag(BlockTag::Pending));
+            new_account.set_block_id(BlockId::Tag(BlockTag::Pending));
+            deployed_accounts.push(new_account);
 
-            deployed_accounts.push(account);
             let starknet_rpc = self.starknet_rpc.clone();
-
             deployment_joinset.spawn(async move {
                 wait_for_tx(&starknet_rpc, result.transaction_hash, CHECK_INTERVAL).await
             });
@@ -258,10 +256,9 @@ impl GatlingSetup {
             return Ok(class_hash);
         }
 
-        let nonce = self.account.get_nonce().await?;
-
+        let nonce = self.deployer.get_nonce().await?;
         let tx_resp = self
-            .account
+            .deployer
             .declare_legacy(Arc::new(contract_artifact))
             .max_fee(MAX_FEE)
             .nonce(nonce)
@@ -294,19 +291,19 @@ impl GatlingSetup {
             contract_path.as_ref().display(),
             class_hash
         );
-        let nonce = self.account.get_nonce().await?;
+        let nonce = self.deployer.get_nonce().await?;
 
         if self.check_already_declared(class_hash).await? {
             return Ok(class_hash);
         }
 
-        self.account.set_block_id(BlockId::Tag(BlockTag::Pending));
+        self.deployer.set_block_id(BlockId::Tag(BlockTag::Pending));
 
         // We need to flatten the ABI into a string first
         let flattened_class = contract_artifact.flatten()?;
 
         let tx_resp = self
-            .account
+            .deployer
             .declare_v2(Arc::new(flattened_class), casm_class_hash)
             .max_fee(MAX_FEE)
             .nonce(nonce)
