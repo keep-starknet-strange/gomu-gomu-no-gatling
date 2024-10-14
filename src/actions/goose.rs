@@ -371,7 +371,7 @@ pub async fn raw_send_request<T: DeserializeOwned>(
     method: JsonRpcMethod,
     param: impl Serialize,
 ) -> Result<(JsonRpcResponse<T>, GooseRequestMetric), Box<TransactionError>> {
-    // Copied from https://docs.rs/starknet-providers/0.9.0/src/starknet_providers/jsonrpc/transports/http.rs.html#21-27
+    // Copied from https://docs.rs/starknet-providers/0.12.0/src/starknet_providers/jsonrpc/transports/http.rs.html#21-27
     #[derive(Debug, Serialize)]
     struct JsonRpcRequest<T> {
         id: u64,

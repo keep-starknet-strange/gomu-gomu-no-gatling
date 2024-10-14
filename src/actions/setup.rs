@@ -196,7 +196,7 @@ impl GatlingSetup {
                     fee_token_address,
                     self.account.clone(),
                     address,
-                    felt!("0xFFFFFFFFFFFFFFF"),
+                    felt!("0xFFFFF"),
                     nonce,
                 )
                 .await?;
