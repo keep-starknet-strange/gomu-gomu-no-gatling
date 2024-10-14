@@ -61,6 +61,9 @@ impl GatlingSetup {
                 ExecutionEncoding::New
             },
         );
+
+        // `SingleOwnerAccount` defaults to checking nonce and estimating fees against the latest
+        // block. Change the target block to pending with the following line:
         account.set_block_id(BlockId::Tag(BlockTag::Pending));
 
         Ok(Self {
@@ -201,16 +204,18 @@ impl GatlingSetup {
 
             let result = deploy.send().await?;
 
-            let account = SingleOwnerAccount::new(
+            let mut account = SingleOwnerAccount::new(
                 self.starknet_rpc.clone(),
                 signer.clone(),
                 result.contract_address,
                 self.config.setup.chain_id,
                 execution_encoding,
             );
+            // `SingleOwnerAccount` defaults to checking nonce and estimating fees against the latest
+            // block. Change the target block to pending with the following line:
+            account.set_block_id(BlockId::Tag(BlockTag::Pending));
 
             deployed_accounts.push(account);
-
             let starknet_rpc = self.starknet_rpc.clone();
 
             deployment_joinset.spawn(async move {
@@ -258,7 +263,6 @@ impl GatlingSetup {
             return Ok(class_hash);
         }
 
-        self.account.set_block_id(BlockId::Tag(BlockTag::Pending));
         let nonce = self.account.get_nonce().await?;
 
         let tx_resp = self
@@ -301,8 +305,6 @@ impl GatlingSetup {
             return Ok(class_hash);
         }
 
-        // `SingleOwnerAccount` defaults to checking nonce and estimating fees against the latest
-        // block. Optionally change the target block to pending with the following line:
         self.account.set_block_id(BlockId::Tag(BlockTag::Pending));
 
         // We need to flatten the ABI into a string first
