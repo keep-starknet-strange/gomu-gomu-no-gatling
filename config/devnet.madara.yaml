@@ -18,9 +18,9 @@ run:
   concurrency: 5
   shooters:
     - name: "transfer"
-      shoot: 5000
+      shoot: 10000
     - name: "mint"
-      shoot: 5000
+      shoot: 10000
   read_benches:
     - name: "Get Events"
       num_requests: 100
