@@ -33,6 +33,6 @@ report:
 
 deployer:
   salt: "0x42"
-  address: "0x06b09c5cca7e5ef944dc3be7514cc1ae5a6e267f0f1f2b5520e90dc00aecf6e1"
-  signing_key: "0x076f2ccdb23f29bc7b69278e947c01c6160a31cf02c19d06d0f6e5ab1d768b86"
+  address: "0x067e6d6a380e8b79aeb9d5164643174b3a9e4f381e5f28929441e17b81056f91"
+  signing_key: "0x04189668c9e4825137bf31e02d7f6b70120e0d18a16ed9fa73632e8066975065"
   legacy_account: false
