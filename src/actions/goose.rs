@@ -79,7 +79,6 @@ impl GooseWriteUserState {
         mut account: StarknetAccount,
         transactions_amount: usize,
     ) -> Result<Self, ProviderError> {
-        tracing::info!("🗣 {}", account.address());
         account.set_block_id(BlockId::Tag(BlockTag::Pending));
         Ok(Self {
             nonce: account.get_nonce().await?,

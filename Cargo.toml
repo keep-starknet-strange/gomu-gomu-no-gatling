@@ -13,23 +13,23 @@ description = "Gomu Gomu No Gatling is a blazing fast tool to benchmark Starknet
 opt-level = 3
 
 [dependencies]
-starknet = "0.12.0"
-goose = "0.17.2"
-tracing = "0.1.40"
-tokio = { version = "1.40", features = ["full"] }
-futures = "0.3.31"
 clap = { version = "4.5.20", features = ["derive"] }
 color-eyre = "0.6.3"
 config = "0.14.0"
+crossbeam-queue = "0.3.11"
 dotenvy = "0.15.7"
+futures = "0.3.31"
+goose = "0.17.2"
+lazy_static = "1.5.0"
+rand = { version = "0.8.5", features = ["rand_chacha"] }
 serde = { version = "1.0.210", features = ["derive"] }
 serde_json = { version = "1.0.128", features = ["preserve_order"] }
-url = "2.5.2"
-rand = { version = "0.8.5", features = ["rand_chacha"] }
-lazy_static = "1.5.0"
+starknet = "0.12.0"
 sysinfo = "0.30.12"
-crossbeam-queue = "0.3.11"
+tokio = { version = "1.40", features = ["full"] }
+tracing = "0.1.40"
 tracing-subscriber = "0.3.18"
+url = "2.5.2"
 
 [features]
 default = []

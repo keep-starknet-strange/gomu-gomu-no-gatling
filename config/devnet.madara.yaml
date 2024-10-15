@@ -12,7 +12,6 @@ setup:
     v0: contracts/v0/OpenzeppelinAccount.json
 
   fee_token_address: "0x049d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7"
-  num_accounts: 1
   chain_id: "MADARA_DEVNET"
 
 run:
@@ -33,7 +32,7 @@ report:
   output_location: "report"
 
 deployer:
-  salt: "0x1"
-  address: "0x4a2b383d808b7285cc98b2309f974f5111633c84fd82c9375c118485d2d57ba"
-  signing_key: "0x7a9779748888c95d96bbbce041b5109c6ffc0c4f30561c0170384a5922d9e91"
+  salt: "0x42"
+  address: "0x06b09c5cca7e5ef944dc3be7514cc1ae5a6e267f0f1f2b5520e90dc00aecf6e1"
+  signing_key: "0x076f2ccdb23f29bc7b69278e947c01c6160a31cf02c19d06d0f6e5ab1d768b86"
   legacy_account: false
