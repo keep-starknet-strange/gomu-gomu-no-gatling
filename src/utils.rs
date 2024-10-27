@@ -162,7 +162,7 @@ pub async fn get_blocks_with_txs(
 
         let mut resources = Vec::with_capacity(block_with_txs.transactions.len());
 
-        #[cfg(with_sps)]
+        #[cfg(feature = "with_sps")]
         for tx in block_with_txs.transactions.iter() {
             let maybe_receipt = starknet_rpc
                 .get_transaction_receipt(tx.transaction_hash())
@@ -185,7 +185,7 @@ pub async fn get_blocks_with_txs(
 
             resources.push(resource);
         }
-        #[cfg(not(with_sps))]
+        #[cfg(not(feature = "with_sps"))]
         for _ in block_with_txs.transactions.iter() {
             resources.push(ExecutionResources {
                 computation_resources: ComputationResources {
