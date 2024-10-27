@@ -8,8 +8,8 @@ use lazy_static::lazy_static;
 
 use starknet::core::types::Felt;
 use starknet::core::types::{
-    BlockId, BlockWithTxs, ComputationResources, DataAvailabilityResources, DataResources,
-    ExecutionResources, ExecutionResult, MaybePendingBlockWithTxs, StarknetError,
+    BlockId, BlockWithTxs, ExecutionResources, ExecutionResult, MaybePendingBlockWithTxs,
+    StarknetError,
 };
 use starknet::providers::ProviderError;
 use starknet::providers::{jsonrpc::HttpTransport, JsonRpcClient, Provider};
@@ -164,29 +164,26 @@ pub async fn get_blocks_with_txs(
 
         #[cfg(feature = "with_sps")]
         for tx in block_with_txs.transactions.iter() {
-            let maybe_receipt = starknet_rpc
+            let receipt_with_block_info = starknet_rpc
                 .get_transaction_receipt(tx.transaction_hash())
                 .await?;
 
             use starknet::core::types::TransactionReceipt as TR;
-
-            let resource = match maybe_receipt {
-                Receipt(receipt) => match receipt {
-                    TR::Invoke(receipt) => receipt.execution_resources,
-                    TR::L1Handler(receipt) => receipt.execution_resources,
-                    TR::Declare(receipt) => receipt.execution_resources,
-                    TR::Deploy(receipt) => receipt.execution_resources,
-                    TR::DeployAccount(receipt) => receipt.execution_resources,
-                },
-                PendingReceipt(pending) => {
-                    bail!("Transaction should not be pending. Pending: {pending:?}");
-                }
+            let resource = match receipt_with_block_info.receipt {
+                TR::Invoke(receipt) => receipt.execution_resources,
+                TR::L1Handler(receipt) => receipt.execution_resources,
+                TR::Declare(receipt) => receipt.execution_resources,
+                TR::Deploy(receipt) => receipt.execution_resources,
+                TR::DeployAccount(receipt) => receipt.execution_resources,
             };
-
             resources.push(resource);
         }
+
         #[cfg(not(feature = "with_sps"))]
         for _ in block_with_txs.transactions.iter() {
+            use starknet::core::types::{
+                ComputationResources, DataAvailabilityResources, DataResources,
+            };
             resources.push(ExecutionResources {
                 computation_resources: ComputationResources {
                     steps: 0,
