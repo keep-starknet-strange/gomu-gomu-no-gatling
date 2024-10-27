@@ -1,9 +1,11 @@
 use color_eyre::eyre::bail;
-use log::{debug, info, warn};
 use starknet::{
-    accounts::{Account, Call, ConnectedAccount},
+    accounts::{Account, ConnectedAccount},
     contract::ContractFactory,
-    core::types::{BlockId, BlockTag, FieldElement},
+    core::{
+        types::{BlockId, BlockTag, Call, Felt},
+        utils::{get_udc_deployed_address, UdcUniqueness},
+    },
     macros::{felt, selector},
     providers::Provider,
 };
@@ -11,13 +13,14 @@ use tokio::task::JoinSet;
 
 use crate::{
     actions::setup::{self, GatlingSetup, StarknetAccount, CHECK_INTERVAL, MAX_FEE},
-    utils::{compute_contract_address, wait_for_tx},
+    utils::wait_for_tx,
 };
 
 use super::Shooter;
 
 pub struct TransferShooter {
-    pub erc20_address: FieldElement,
+    pub erc20_address: Felt,
+    #[allow(unused)]
     pub account: StarknetAccount,
 }
 
@@ -50,10 +53,16 @@ impl Shooter for TransferShooter {
             initial_supply_high,
             recipient,
         ];
-        let unique = false;
 
-        let address =
-            compute_contract_address(setup.config().deployer.salt, class_hash, &constructor_args);
+        let deployer = setup.config().deployer.clone();
+        let udc_uniqueness = UdcUniqueness::NotUnique;
+        let unique = matches!(udc_uniqueness, UdcUniqueness::Unique(_));
+        let address = get_udc_deployed_address(
+            deployer.salt,
+            class_hash,
+            &UdcUniqueness::NotUnique,
+            &constructor_args,
+        );
 
         if let Ok(contract_class_hash) = setup
             .rpc_client()
@@ -61,7 +70,7 @@ impl Shooter for TransferShooter {
             .await
         {
             if contract_class_hash == class_hash {
-                warn!("ERC20 contract already deployed at address {address:#064x}");
+                tracing::warn!("ERC20 contract already deployed at address {address:#064x}");
                 return Ok(TransferShooter {
                     erc20_address: address,
                     account: setup.deployer_account().clone(),
@@ -72,28 +81,29 @@ impl Shooter for TransferShooter {
         }
 
         let deploy =
-            contract_factory.deploy(constructor_args, setup.config().deployer.salt, unique);
+            contract_factory.deploy_v1(constructor_args, setup.config().deployer.salt, unique);
 
-        info!(
+        tracing::info!(
             "Deploying ERC20 contract with nonce={}, address={:#064x}",
-            nonce, address
+            nonce,
+            address
         );
 
         let result = deploy.nonce(nonce).max_fee(MAX_FEE).send().await?;
-        nonce += FieldElement::ONE;
+        nonce += Felt::ONE;
         wait_for_tx(setup.rpc_client(), result.transaction_hash, CHECK_INTERVAL).await?;
 
-        debug!(
+        tracing::info!(
             "Deploy ERC20 transaction accepted {:#064x}",
             result.transaction_hash
         );
 
-        info!("ERC20 contract deployed at address {:#064x}", address);
+        tracing::info!("ERC20 contract deployed at address {:#064x}", address);
 
         let mut joinset = JoinSet::new();
 
         for account in setup.accounts() {
-            info!("Funding account at address {address:#064x}");
+            tracing::info!("Funding account at address {address:#064x}");
 
             let tx_hash = setup::transfer(
                 setup.deployer_account().clone(),
@@ -104,7 +114,7 @@ impl Shooter for TransferShooter {
             )
             .await?;
 
-            nonce += FieldElement::ONE;
+            nonce += Felt::ONE;
             let rpc_client = setup.rpc_client().clone();
             joinset.spawn(async move { wait_for_tx(&rpc_client, tx_hash, CHECK_INTERVAL).await });
         }
@@ -120,17 +130,8 @@ impl Shooter for TransferShooter {
     }
 
     fn get_execution_data(&self, _account: &StarknetAccount) -> Call {
+        const VOID_ADDRESS: Felt = felt!("0xdead");
         let (amount_low, amount_high) = (felt!("1"), felt!("0"));
-
-        // Hex: 0xdead
-        // from_hex_be isn't const whereas from_mont is
-        const VOID_ADDRESS: FieldElement = FieldElement::from_mont([
-            18446744073707727457,
-            18446744073709551615,
-            18446744073709551615,
-            576460752272412784,
-        ]);
-
         Call {
             to: self.erc20_address,
             selector: selector!("transfer"),

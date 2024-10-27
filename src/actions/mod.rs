@@ -1,7 +1,7 @@
 use std::{fs::File, mem, sync::Arc};
 
 use color_eyre::eyre::bail;
-use log::info;
+use tracing::info;
 
 use crate::{
     config::GatlingConfig,
@@ -35,7 +35,7 @@ pub async fn shoot(mut config: GatlingConfig) -> color_eyre::Result<()> {
 
     for shooter in shooters {
         if shooter.shoot == 0 {
-            log::info!("Skipping {} transfers", shooter.name);
+            tracing::info!("Skipping {} transfers", shooter.name);
             continue;
         }
 
@@ -66,7 +66,7 @@ pub async fn shoot(mut config: GatlingConfig) -> color_eyre::Result<()> {
         global_report.all_bench_report = Some(all_bench_report);
 
         if let Err(error) = rpc_result {
-            log::error!("Failed to get block range: {error}")
+            tracing::error!("Failed to get block range: {error}")
         }
     }
 
@@ -105,7 +105,7 @@ async fn make_report_over_shooter<S: Shooter + Send + Sync + 'static>(
     let num_blocks = setup.config().report.num_blocks;
 
     if let Err(error) = rpc_result {
-        log::error!("Failed to get block range: {error}")
+        tracing::error!("Failed to get block range: {error}")
     } else if num_blocks != 0 {
         report
             .with_last_x_blocks(setup.rpc_client(), num_blocks)

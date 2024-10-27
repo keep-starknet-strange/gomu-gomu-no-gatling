@@ -1,0 +1,38 @@
+rpc:
+  url: "http://127.0.0.1:9944"
+
+setup:
+  erc20_contract:
+    v0: contracts/v0/ERC20.json
+
+  erc721_contract:
+    v0: contracts/v0/ERC721.json
+
+  account_contract:
+    v0: contracts/v0/OpenzeppelinAccount.json
+
+  fee_token_address: "0x049d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7"
+  chain_id: "MADARA_DEVNET"
+
+run:
+  concurrency: 5
+  shooters:
+    - name: "transfer"
+      shoot: 10000
+    - name: "mint"
+      shoot: 10000
+  read_benches:
+    - name: "Get Events"
+      num_requests: 100
+      method: "starknet_getEvents"
+      parameters_location: "config/read_params/get_events.json"
+
+report:
+  num_blocks: 4
+  output_location: "report"
+
+deployer:
+  salt: "0x42"
+  address: "0x021ae26856dbb24032cac6bba14a776741331dc031f0dc43efb5f333e6a64da2"
+  signing_key: "0x077e56c6dc32d40a67f6f7e6625c8dc5e570abe49c0a24e9202e4ae906abcc07"
+  legacy_account: false

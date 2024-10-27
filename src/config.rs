@@ -12,7 +12,7 @@ use serde::{de::Error as DeError, Deserializer};
 use serde_json::{Map, Value};
 use starknet::{
     core::{
-        types::{contract::CompiledClass, FieldElement},
+        types::{contract::CompiledClass, Felt},
         utils::{cairo_short_string_to_felt, CairoShortStringToFeltError},
     },
     providers::jsonrpc::JsonRpcMethod,
@@ -54,7 +54,7 @@ pub struct ContractSourceConfigV1 {
 }
 
 impl ContractSourceConfigV1 {
-    pub fn get_casm_hash(&self) -> Result<FieldElement> {
+    pub fn get_casm_hash(&self) -> Result<Felt> {
         let mut casm_file = std::fs::File::open(&self.casm_path)?;
         let casm_class = serde_json::from_reader::<_, CompiledClass>(&mut casm_file)?;
         let casm_hash = casm_class.class_hash()?;
@@ -77,7 +77,7 @@ impl ContractSourceConfig {
         }
     }
 
-    pub fn get_casm_hash(&self) -> Result<Option<FieldElement>> {
+    pub fn get_casm_hash(&self) -> Result<Option<Felt>> {
         if let ContractSourceConfig::V1(config) = self {
             let mut casm_file = std::fs::File::open(&config.casm_path)?;
             let casm_class = serde_json::from_reader::<_, CompiledClass>(&mut casm_file)?;
@@ -94,16 +94,16 @@ pub struct SetupConfig {
     pub erc20_contract: ContractSourceConfig,
     pub erc721_contract: ContractSourceConfig,
     pub account_contract: ContractSourceConfig,
-    pub fee_token_address: FieldElement,
+    pub fee_token_address: Felt,
     #[serde(deserialize_with = "from_str_deserializer")]
-    pub chain_id: FieldElement,
+    pub chain_id: Felt,
 }
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct DeployerConfig {
-    pub salt: FieldElement,
-    pub address: FieldElement,
-    pub signing_key: FieldElement,
+    pub salt: Felt,
+    pub address: Felt,
+    pub signing_key: Felt,
     pub legacy_account: bool,
 }
 
@@ -165,15 +165,11 @@ fn base_config_builder() -> ConfigBuilder<DefaultState> {
         .add_source(config::Environment::with_prefix("gatling"))
 }
 
-fn from_str_deserializer<'de, D>(deserializer: D) -> Result<FieldElement, D::Error>
+fn from_str_deserializer<'de, D>(deserializer: D) -> Result<Felt, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    // Deserialize a string using the deserializer.
     let s = String::deserialize(deserializer)?;
-
-    // Use your custom function to try to create a FieldElement from the string.
-    // If there's an error, use the Error::custom method to convert it into a Serde error.
     cairo_short_string_to_felt(&s).map_err(|e| match e {
         CairoShortStringToFeltError::NonAsciiCharacter => D::Error::custom("non ascii character"),
         CairoShortStringToFeltError::StringTooLong => D::Error::custom("string too long"),

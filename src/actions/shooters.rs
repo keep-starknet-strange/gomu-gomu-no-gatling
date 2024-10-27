@@ -8,8 +8,7 @@ use goose::{
     GooseAttack,
 };
 use starknet::{
-    accounts::Call,
-    core::types::{FieldElement, InvokeTransactionResult},
+    core::types::{Call, Felt, InvokeTransactionResult},
     providers::jsonrpc::JsonRpcMethod,
 };
 
@@ -134,7 +133,7 @@ pub trait Shooter {
                         "Should be successful as we already asserted that the session data is a GooseUserState",
                     );
 
-                *nonce += FieldElement::ONE;
+                *nonce += Felt::ONE;
 
                 prev_tx.push(response.transaction_hash);
 
